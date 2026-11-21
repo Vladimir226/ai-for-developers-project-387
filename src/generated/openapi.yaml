@@ -101,6 +101,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/bookings/{id}/calendar:
+    get:
+      operationId: getBookingCalendar
+      summary: Файл календаря брони
+      description: |-
+        Файл календаря брони (RFC 5545): VEVENT с типом встречи и именем гостя
+        в заголовке, контактом и заметкой в описании, интервалом в UTC (ADR-0009)
+        и стабильным UID. 404 — брони нет (включая отменённую — отмена удаляет).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: |-
+            200-ответ `GET /api/v1/bookings/{id}/calendar` — файл события iCalendar
+            (RFC 5545) для импорта в календарь (Google, Apple, Outlook).
+          headers:
+            content-disposition:
+              required: true
+              description: Предложение имени файла с идентификатором брони (Content-Disposition).
+              schema:
+                type: string
+          content:
+            text/calendar; charset=utf-8:
+              schema:
+                type: string
+        '404':
+          description: 404 — ресурс не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /api/v1/event-types:
     get:
       operationId: listEventTypes

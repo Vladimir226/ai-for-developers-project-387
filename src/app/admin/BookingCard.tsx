@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { bookingCalendarUrl } from '@/lib/booking-calendar-url';
 import { createApiClient } from '@/lib/sdk/client';
 import { cancelFailureNotice, failureFromApiError, type BookingCardData } from './admin-logic';
 
@@ -12,6 +13,8 @@ import { cancelFailureNotice, failureFromApiError, type BookingCardData } from '
 // e2e-сценариях (#37), как и у удаления типа (D4). После мутации —
 // router.refresh(): список — серверная истина (ADR-004); 404 (бронь уже
 // отменена в другом окне) молча сводится к тому же refresh.
+// «Добавить в календарь» (#11) — ссылка на GET /api/v1/bookings/{id}/calendar:
+// браузерное скачивание .ics, без SDK-клиента (ADR-0013).
 
 type CardMode = 'view' | 'confirming';
 
@@ -93,6 +96,16 @@ export function BookingCard({ booking }: { booking: BookingCardData }) {
             <span className="text-[12px] font-semibold rounded-full bg-sage-soft text-sage px-2.5 py-1 whitespace-nowrap">
               {booking.durationLabel}
             </span>
+            {/* Скачивание .ics этой брони (#11): обычная ссылка на эндпоинт,
+                без SDK и router.refresh — навигация-скачивание, исключение
+                из ADR-0004 по ADR-0013 */}
+            <a
+              href={bookingCalendarUrl(booking.id)}
+              title="Скачать файл события .ics для импорта в календарь"
+              className="h-10 px-4 rounded-xl border border-line text-[13.5px] font-semibold text-sage hover:border-sage/50 hover:bg-sage-soft transition"
+            >
+              Добавить в календарь
+            </a>
             <button
               type="button"
               onClick={() => {

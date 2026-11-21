@@ -26,6 +26,7 @@
 | ADR-0010 | Контракт-фёрст: TypeSpec → OpenAPI → SDK + Zod; сервер реализуется по контракту                                                                             | Accepted                   | [0010-contract-first-typespec.md](0010-contract-first-typespec.md)               |
 | ADR-0011 | Вычисляемые слоты из типов событий и рабочих часов; бронь = тип + старт + контакты; занятость = наложение полуинтервалов                                    | Accepted                   | [0011-derived-slots-from-event-types.md](0011-derived-slots-from-event-types.md) |
 | ADR-0012 | Публичная страница «Предстоящие записи» (/bookings): все предстоящие брони всех гостей, read-only, без auth; существующий эндпоинт, без изменений контракта | Accepted                   | [0012-public-upcoming-bookings.md](0012-public-upcoming-bookings.md)             |
+| ADR-0013 | Файл `.ics` брони без авторизации (`GET /api/v1/bookings/{id}/calendar`) вместо OAuth-синхронизации и webcal-фида; кнопка-ссылка — исключение из ADR-0004   | Accepted                   | [0013-ics-download-no-auth.md](0013-ics-download-no-auth.md)                     |
 
 ## Как добавить новый ADR
 
