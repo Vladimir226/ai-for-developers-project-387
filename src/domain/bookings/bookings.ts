@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { getDb } from '@/lib/db/prisma';
+import { isSlotTooSoon } from '@/domain/availability/lead-time';
 import { isBookableSlotStart } from '@/domain/availability/slots';
 import type { CreateBookingInput } from '@/lib/validation/booking';
 
@@ -103,6 +104,7 @@ export type CreateBookingResult =
   | { ok: true; booking: BookingRecord }
   | { ok: false; reason: 'event-type-not-found' }
   | { ok: false; reason: 'slot-in-past' }
+  | { ok: false; reason: 'slot-too-soon' }
   | { ok: false; reason: 'invalid-slot-start' }
   | { ok: false; reason: 'slot-already-booked' };
 
@@ -112,7 +114,8 @@ export type CreateBookingResult =
  * комментарий модуля). Внутри транзакции тип не удалится между проверкой и
  * INSERT (каскад D4), наложение проверяется в том же снапшоте, в котором
  * пишем. Приоритет ошибок: неизвестный тип (404) → прошлое время (409) →
- * невалидный старт слота (422, ADR-004/D6) → занятость (409). Изменение
+ * слишком рано — минимальный запас до звонка, 409 (#22) → невалидный старт
+ * слота (422, ADR-004/D6) → занятость (409). Изменение
  * длительности типа не пересчитывает созданные брони — интервал
  * фиксируется на момент создания (ADR-0011).
  */
@@ -142,11 +145,19 @@ async function createBookingSerialized(
       return { ok: false, reason: 'event-type-not-found' as const };
     }
 
-    // GLOSSARY «свободный слот»: бронируемый интервал целиком в будущем.
-    // Проверка идёт до занятости: слот и в прошлом, и занят → SLOT_IN_PAST
-    // (аддендум №1, пиннится тестом).
+    // GLOSSARY «свободный слот»: бронируемый интервал целиком в будущем и
+    // начинается не ранее чем через минимальный запас. Проверка идёт до
+    // занятости: слот и в прошлом, и занят → SLOT_IN_PAST (аддендум №1,
+    // пиннится тестом).
     if (input.startsAt.getTime() <= now.getTime()) {
       return { ok: false, reason: 'slot-in-past' as const };
+    }
+
+    // Минимальный запас до звонка (#22): старт не раньше now + 30 минут,
+    // старт ровно на границе допустим. Проверяется после прошлого —
+    // прошедший старт отвечает SLOT_IN_PAST.
+    if (isSlotTooSoon(input.startsAt, now)) {
+      return { ok: false, reason: 'slot-too-soon' as const };
     }
 
     // Серверный инвариант слота (ADR-004, D6): гость бронирует только старт
