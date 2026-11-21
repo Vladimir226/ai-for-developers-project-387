@@ -52,6 +52,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/bookings/{id}/calendar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Файл календаря брони
+         * @description Файл календаря брони (RFC 5545): VEVENT с типом встречи и именем гостя
+         *     в заголовке, контактом и заметкой в описании, интервалом в UTC (ADR-0009)
+         *     и стабильным UID. 404 — брони нет (включая отменённую — отмена удаляет).
+         */
+        get: operations["getBookingCalendar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/event-types": {
         parameters: {
             query?: never;
@@ -437,6 +459,42 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description 404 — ресурс не найден. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getBookingCalendar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description 200-ответ `GET /api/v1/bookings/{id}/calendar` — файл события iCalendar
+             *     (RFC 5545) для импорта в календарь (Google, Apple, Outlook).
+             */
+            200: {
+                headers: {
+                    /** @description Предложение имени файла с идентификатором брони (Content-Disposition). */
+                    "content-disposition": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/calendar; charset=utf-8": string;
+                };
             };
             /** @description 404 — ресурс не найден. */
             404: {

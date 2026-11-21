@@ -137,3 +137,13 @@ op createBooking(
 @route("/api/v1/bookings/{id}")
 @delete
 op deleteBooking(@path id: string): NoContentResponse | NotFoundError;
+
+/**
+ * Файл календаря брони (RFC 5545): VEVENT с типом встречи и именем гостя
+ * в заголовке, контактом и заметкой в описании, интервалом в UTC (ADR-0009)
+ * и стабильным UID. 404 — брони нет (включая отменённую — отмена удаляет).
+ */
+@summary("Файл календаря брони")
+@route("/api/v1/bookings/{id}/calendar")
+@get
+op getBookingCalendar(@path id: string): BookingCalendarFile | NotFoundError;

@@ -184,6 +184,16 @@ async function createBookingSerialized(
   });
 }
 
+/**
+ * Бронь по идентификатору (с вложенным типом) или null. Отменённой брони
+ * здесь не бывает — отмена удаляет строку, не помечает её.
+ */
+export async function findBookingById(id: string): Promise<BookingRecord | null> {
+  const db = await getDb();
+  const row = await db.booking.findUnique({ where: { id }, include: { eventType: true } });
+  return row ? toRecord(row) : null;
+}
+
 /** Отменяет бронь (DELETE строки — время снова свободно для всех типов). */
 export async function deleteBooking(id: string): Promise<boolean> {
   const db = await getDb();
