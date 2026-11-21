@@ -72,26 +72,29 @@ jobs:
             --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("<!-- autoreview -->")) | "---\n" + .body' \
             > .autoreview/previous-reviews.md || true
 
+      # Установка отдельным шагом без секрета в окружении: установочные
+      # скрипты пакета не должны видеть ZHIPU_API_KEY; версия зафиксирована
+      # против внезапных изменений поведения CLI (замечание 2 авторевью).
+      - name: Установить OpenCode CLI
+        run: npm install --global @opencode/cli@2.3.0
+
       - name: Запустить ревьюера (OpenCode CLI)
         env:
           ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
         run: |
-          npm install --global @opencode/cli
-          # Конфиг только для CI-ревьюера (в репозиторий не коммитится):
-          # неинтерактивный запуск не может ответить на запрос разрешения,
-          # поэтому веб-инструменты и правки файлов запрещены явно — иначе
-          # попытка модели вызывает «Cancelled a request for input this run
-          # cannot answer: Web Search» и падение прогона.
-          cat > opencode.json <<'EOF'
-          {
-            "$schema": "https://opencode.ai/config.json",
-            "permissions": [
-              { "action": "websearch", "resource": "*", "effect": "deny" },
-              { "action": "webfetch", "resource": "*", "effect": "deny" },
-              { "action": "edit", "resource": "*", "effect": "deny" }
-            ]
-          }
-          EOF
+          # Запреты только для этого запуска: неинтерактивный opencode run
+          # не может ответить на запрос разрешения (сбой прогона «Cancelled a
+          # request for input ... Web Search»). Проектный opencode.json не
+          # перезаписывается: deny-правила дописываются к нему, MCP-конфиг
+          # и прочие настройки сохраняются (замечание 1 авторевью).
+          deny_rules='[{"action":"websearch","resource":"*","effect":"deny"},{"action":"webfetch","resource":"*","effect":"deny"},{"action":"edit","resource":"*","effect":"deny"}]'
+          if [ -f opencode.json ]; then
+            jq --argjson deny "$deny_rules" '.permissions = ((.permissions // []) + $deny)' \
+              opencode.json > opencode.json.new
+            mv opencode.json.new opencode.json
+          else
+            printf '{"$schema":"https://opencode.ai/config.json","permissions":%s}\n' "$deny_rules" > opencode.json
+          fi
           cat > .autoreview/prompt.md <<'PROMPT'
           Ты — независимый ревьюер pull request в проекте «Календарь звонков».
           Ты НЕ изменяешь код и не выполняешь команды изменения PR: прочитай

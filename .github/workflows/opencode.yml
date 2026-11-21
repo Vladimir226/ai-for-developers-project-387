@@ -96,13 +96,15 @@ jobs:
       # тайм-аут задания → timeout; отсутствие ключа/сбой подготовки → infra;
       # прочий неуспех агента → agent_failed. Отказ бюджета (allowed=false)
       # не считается сбоем агента (замечание 4 авторевью PR #20); номер
-      # субъекта устойчив к обоим событиям комментариев.
+      # субъекта устойчив к обоим событиям комментариев. cancelled() истинно
+      # и для ручной отмены — текст не утверждает причину безусловно
+      # (замечание 3 повторного авторевью).
       - name: Отчёт — тайм-аут вызова
         if: cancelled()
         uses: actions/github-script@v8
         with:
           script: |
-            const body = `<!-- agent-outcome -->\n## Агент остановлен — нужен человек\n\nПричина: \`timeout\` — задание превысило лимит времени.\n\nЛоги: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const body = `<!-- agent-outcome -->\n## Агент остановлен — нужен человек\n\nПричина: \`timeout\` — задание остановлено по отмене: тайм-аут либо ручная отмена прогона.\n\nЛоги: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
             const number = context.issue?.number ?? context.payload.pull_request?.number;
             await github.rest.issues.createComment({
               ...context.repo,
@@ -115,12 +117,19 @@ jobs:
         uses: actions/github-script@v8
         env:
           KEY_PRESENT: ${{ secrets.ZHIPU_API_KEY != '' }}
+          # Сбой самого шага бюджета — модель не запускалась: это подготовка,
+          # а не неуспех агента (замечание 3 повторного авторевью)
+          BUDGET_CONCLUSION: ${{ steps.budget.conclusion }}
         with:
           script: |
-            const reason = process.env.KEY_PRESENT === 'true' ? 'agent_failed' : 'infra';
-            const hint = reason === 'infra'
-              ? 'Отсутствует ключ модели (ZHIPU_API_KEY) или не подготовлен инструмент.'
-              : 'Агент завершился неуспешно — подробности в логах прогона.';
+            const budgetFailed = process.env.BUDGET_CONCLUSION === 'failure';
+            const keyMissing = process.env.KEY_PRESENT !== 'true';
+            const reason = budgetFailed || keyMissing ? 'infra' : 'agent_failed';
+            const hint = budgetFailed
+              ? 'Шаг проверки бюджета упал до вызова модели — счётчик не прочитан (GitHub API), запуск остановлен без расхода попытки.'
+              : keyMissing
+                ? 'Отсутствует ключ модели (ZHIPU_API_KEY) или не подготовлен инструмент.'
+                : 'Агент завершился неуспешно — подробности в логах прогона.';
             const body = `<!-- agent-outcome -->\n## Агент остановлен — нужен человек\n\nПричина: \`${reason}\`. ${hint}\n\nЛоги: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
             const number = context.issue?.number ?? context.payload.pull_request?.number;
             await github.rest.issues.createComment({
