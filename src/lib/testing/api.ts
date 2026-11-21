@@ -207,3 +207,9 @@ export function deleteBooking(id: string): Promise<Response> {
     }),
   );
 }
+
+export function getBookingCalendar(id: string): Promise<Response> {
+  return import('@/app/api/v1/bookings/[id]/calendar/route').then(({ GET }) =>
+    GET(new Request(`${BASE}/api/v1/bookings/${id}/calendar`), { params: Promise.resolve({ id }) }),
+  );
+}
