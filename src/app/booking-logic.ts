@@ -211,8 +211,15 @@ export function countWindows(n: number): string {
   return `${n} ${pluralRu(n, 'окно', 'окна', 'окон')}`;
 }
 
+/** «30 минут» — величина запаса с русской плюрализацией (единый источник
+ * минуты — константа домена; замечание ревью PR #25 о форме «минут»). */
+export function leadMinutesRu(): string {
+  const minutes = MIN_LEAD_TIME_MS / 60_000;
+  return `${minutes} ${pluralRu(minutes, 'минута', 'минуты', 'минут')}`;
+}
+
 /** «1 час 30 минут» — русская плюрализация существительных. */
-function pluralRu(n: number, one: string, few: string, many: string): string {
+export function pluralRu(n: number, one: string, few: string, many: string): string {
   const mod10 = n % 10;
   const mod100 = n % 100;
   if (mod10 === 1 && mod100 !== 11) return one;
@@ -315,7 +322,7 @@ export function bookingBanner(failure: ApiFailure): { title: string; text: strin
         title: 'Слишком поздно записываться',
         // минуты — из константы домена (#22, ADR-0014): текст баннера не
         // рассинхронизируется с правилом (для 30 форма «минут» корректна)
-        text: `До начала звонка меньше ${MIN_LEAD_TIME_MS / 60_000} минут. Список обновлён — выберите окно позже.`,
+        text: `До начала звонка меньше ${leadMinutesRu()}. Список обновлён — выберите окно позже.`,
       };
     case 'gone':
       return {

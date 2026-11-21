@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MIN_LEAD_TIME_MS } from '@/domain/availability/lead-time';
+
+import { leadMinutesRu } from '@/app/booking-logic';
 import { schemas } from '@/generated/zod';
 import { getDb } from '@/lib/db/prisma';
 import {
@@ -366,10 +367,10 @@ describe('POST /api/v1/bookings — минимальный запас до зв�
     expect(response.status).toBe(409);
     const body = schemas.ErrorEnvelope.parse(await response.json());
     expect(body.error.code).toBe('SLOT_TOO_SOON');
-    // пиннинг текста: минуты — из константы домена (единый источник), для
-    // текущей величины — литерал «30 минут»
+    // пиннинг текста: минуты — из константы домена с плюрализацией
+    // (замечание ревью PR #25: форма «минут» врёт при 21/22)
     expect(body.error.message).toBe(
-      `До начала звонка меньше ${MIN_LEAD_TIME_MS / 60_000} минут — выберите слот позже`,
+      `До начала звонка меньше ${leadMinutesRu()} — выберите слот позже`,
     );
 
     // повторная попытка — тот же ответ, слот не занимается
