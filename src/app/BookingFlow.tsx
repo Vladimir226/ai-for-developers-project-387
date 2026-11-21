@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import type { components } from '@/generated/schema';
+import { bookingCalendarUrl } from '@/lib/booking-calendar-url';
 import { createApiClient } from '@/lib/sdk/client';
 import {
   apiFailureFromError,
@@ -422,7 +423,7 @@ export function BookingFlow({
           {/* «Добавить в календарь» (#12): браузерное скачивание .ics прямой
               ссылкой — исключение из «UI ходит через SDK» по ADR-0013 */}
           <a
-            href={`/api/v1/bookings/${success.bookingId}/calendar`}
+            href={bookingCalendarUrl(success.bookingId)}
             className="h-11 inline-flex items-center px-5 rounded-xl border border-line hover:border-sage hover:text-sage text-[14px] font-semibold transition"
           >
             Добавить в календарь
