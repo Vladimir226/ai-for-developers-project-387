@@ -1,0 +1,71 @@
+# Автотриаж новых обращений: OpenCode-агент делает предварительный разбор
+# свежесозданных issues по скиллу triage. Инструкция — в prompt ниже (для
+# событий issues промпт обязателен: комментария-команды нет).
+# Подготовленные тикеты (to-spec/to-tickets, метки канонических состояний)
+# повторно не разбираются: фильтр пропускает issues с готовыми метками.
+
+name: triage
+
+on:
+  issues:
+    types: [opened] # разбор только при создании обращения
+
+jobs:
+  triage:
+    # Только обращения доверенных авторов (OWNER/MEMBER/COLLABORATOR);
+    # боты отброшены — агент не разбирает issues от release-please и себя.
+    # Обращение уже несёт каноническую метку состояния (например,
+    # ready-for-agent у тикетов to-tickets) → подготовлено, разбор не нужен.
+    if: |
+      github.event.issue.user.type != 'Bot' &&
+      contains(
+        fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+        github.event.issue.author_association
+      ) &&
+      !contains(github.event.issue.labels.*.name, 'needs-triage') &&
+      !contains(github.event.issue.labels.*.name, 'needs-info') &&
+      !contains(github.event.issue.labels.*.name, 'ready-for-agent') &&
+      !contains(github.event.issue.labels.*.name, 'ready-for-human') &&
+      !contains(github.event.issue.labels.*.name, 'wontfix')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Один агент на issue: новый вызов встаёт в очередь, а не отменяет идущий
+    concurrency:
+      group: triage-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write # OIDC-обмен на токен GitHub App opencode-agent
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Run OpenCode
+        uses: anomalyco/opencode/github@latest
+        env:
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+        with:
+          model: zai/glm-5.3-flash
+          prompt: |
+            Автотриаж нового обращения в трекере этого репозитория.
+
+            Прочитай AGENTS.md, docs/agents/issue-tracker.md,
+            docs/agents/triage-labels.md и скилл .agents/skills/triage/SKILL.md
+            (вместе с AGENT-BRIEF.md), затем разбери обращение по скиллу triage:
+
+            1. Собери контекст существующего приложения: GLOSSARY.md, docs/adr/,
+               код. Проверь, не реализовано ли уже запрошенное поведение
+              (redundancy), и нет ли похожего отказа в .out-of-scope/.
+            2. Предложи категорию (bug/enhancement) и состояние; если данных
+               не хватает — состояние needs-info и конкретные вопросы автору.
+            3. Примени метки выбранной категории и состояния.
+            4. Ответь комментарием в обращение: каждый комментарий начинай
+               дисклеймером из скилла triage. Форма — triage notes с блоками
+               «что установлено» и «что нужно от автора»; для полностью
+               ясного обращения — короткий агентский бриф по AGENT-BRIEF.md.
+
+            Ограничения: не меняй код, не создавай ветки и PR, не закрывай
+            обращение (решение за человеком). Отвечай по-русски и кратко.
