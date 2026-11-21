@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0 (2026-11-21)
+
+
+### Features
+
+* перенос приложения «Календарь звонков» из проекта 386 ([#1](https://github.com/Vladimir226/ai-for-developers-project-387/issues/1)) ([80d31be](https://github.com/Vladimir226/ai-for-developers-project-387/commit/80d31be3eb9dca61cc81333b9f99a7ff2b02ec18))
+
 ## [1.1.0](https://github.com/Vladimir226/ai-for-developers-project-386/compare/v1.0.0...v1.1.0) (2026-11-08)
 
 
