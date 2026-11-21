@@ -74,7 +74,7 @@ jobs:
           gh pr comment "$PR_NUMBER" --body "<!-- agent-budget -->
           ## Бюджет агента исчерпан — нужен человек
 
-          Причина: \`limit_exhausted\` — допущено ${USED} запросов агента из ${LIMIT} на этот PR (команды /oc доверенных авторов и повторные запуски).
+          Причина: \`limit_exhausted\` — запросов агента на этот PR: ${USED} при лимите ${LIMIT} (команды вызова доверенных авторов и повторные запуски).
 
           Последний SHA: \`${HEAD_SHA}\`
           Логи: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
@@ -130,11 +130,13 @@ jobs:
             const budgetFailed = process.env.BUDGET_CONCLUSION === 'failure';
             const keyMissing = process.env.KEY_PRESENT !== 'true';
             const reason = agentRan && !keyMissing ? 'agent_failed' : 'infra';
-            const hint = agentRan
-              ? 'Агент завершился неуспешно — подробности в логах прогона.'
-              : budgetFailed
+            const hint = !agentRan
+              ? budgetFailed
                 ? 'Шаг проверки бюджета упал до вызова модели — счётчик не прочитан (GitHub API), запуск остановлен без расхода попытки.'
-                : 'Подготовка упала до вызова модели (ключ, инструменты или ранние шаги задания) — модель не запускалась.';
+                : 'Подготовка упала до вызова модели (ключ, инструменты или ранние шаги задания) — модель не запускалась.'
+              : keyMissing
+                ? 'Шаг модели упал: ключ ZHIPU_API_KEY недоступен — провайдер не мог аутентифицироваться.'
+                : 'Агент завершился неуспешно — подробности в логах прогона.';
             const body = `<!-- agent-outcome -->\n## Агент остановлен — нужен человек\n\nПричина: \`${reason}\`. ${hint}\n\nЛоги: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
             const number = context.issue?.number ?? context.payload.pull_request?.number;
             await github.rest.issues.createComment({

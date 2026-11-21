@@ -61,7 +61,7 @@ describe('matchingAgentRuns', () => {
 });
 
 describe('computeBudget', () => {
-  it('основной сценарий: запросы ниже предела — вызов допускается', () => {
+  it('основной сценарий: три команды при лимите 3 — все допускаются', () => {
     const budget = computeBudget({
       pr,
       generalComments: [human('/oc 1'), human('/oc 2')],
@@ -69,16 +69,24 @@ describe('computeBudget', () => {
       runs: [agentRun()],
       limit: 3,
     });
-    expect(budget).toMatchObject({ used: 3, remaining: 0, allowed: false });
+    // комментарий-триггер уже в счётчике: used == limit значит «этот вызов
+    // ещё допускается» (отказ — на четвёртой команде)
+    expect(budget).toMatchObject({ used: 3, remaining: 0, allowed: true });
   });
 
   it('негативный сценарий: четвёртый запрос отклоняется', () => {
     const budget = computeBudget({
       pr,
-      generalComments: [human('/oc 1'), human('/oc 2'), human('без команды'), human('/oc 4')],
+      generalComments: [
+        human('/oc 1'),
+        human('/oc 2'),
+        human('без команды'),
+        human('/oc 3'),
+        human('/oc 4'),
+      ],
       limit: 3,
     });
-    expect(budget).toMatchObject({ used: 3, allowed: false });
+    expect(budget).toMatchObject({ used: 4, allowed: false });
   });
 
   it('re-run расходует попытку: run_attempt добавляется к запросам', () => {

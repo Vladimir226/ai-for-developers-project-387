@@ -47,7 +47,10 @@ export function matchingAgentRuns(runs, pr) {
   );
 }
 
-/** Бюджет PR: использовано и допущен ли новый вызов. */
+/** Бюджет PR: использовано и допущен ли новый вызов. Комментарий,
+ * вызвавший текущий прогон, уже учтён в счётчике, поэтому лимит 3
+ * допускает три вызова модели, а отказ приходит на четвёртой команде
+ * (замечание 1 четвёртого авторевью PR #20). */
 export function computeBudget({
   pr,
   generalComments = [],
@@ -63,7 +66,7 @@ export function computeBudget({
     0,
   );
   const used = requests + reruns;
-  return { used, limit, remaining: Math.max(0, limit - used), allowed: used < limit };
+  return { used, limit, remaining: Math.max(0, limit - used), allowed: used <= limit };
 }
 
 async function gh(path, headers) {
