@@ -1,0 +1,48 @@
+# OpenCode-агент в GitHub Actions: отвечает на команды /opencode и /oc в
+# комментариях к issues и PR (включая комментарии к строкам диффа).
+# Модель, секрет, права и ограничения — в README.md, раздел «Агент в GitHub».
+
+name: opencode
+
+on:
+  issue_comment:
+    types: [created] # только создание комментария, без повторов на редактирование
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  opencode:
+    # Работа запускается только командой доверенного участника. Комментарии
+    # ботов отброшены, чтобы агент не отвечал на собственные сообщения;
+    # посторонние авторы (в том числе из fork) до задания и секретов не доходят.
+    if: |
+      (contains(github.event.comment.body, '/oc') ||
+      contains(github.event.comment.body, '/opencode')) &&
+      github.event.comment.user.type != 'Bot' &&
+      contains(
+        fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+        github.event.comment.author_association
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Один агент на issue/PR: новый вызов встаёт в очередь, а не отменяет идущий
+    concurrency:
+      group: opencode-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write # OIDC-обмен на токен GitHub App opencode-agent
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false # git-creds не нужны: агент действует токеном App
+
+      - name: Run OpenCode
+        uses: anomalyco/opencode/github@latest
+        env:
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+        with:
+          model: zai/glm-5.3-flash
+          share: true # публичная ссылка на сессию в ответе агента (репо публичное)

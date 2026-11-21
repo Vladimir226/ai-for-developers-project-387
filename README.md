@@ -345,6 +345,41 @@ npx playwright install chromium   # один раз
 npm run test:e2e
 ```
 
+## Агент в GitHub (OpenCode)
+
+Воркфлоу [`opencode.yml`](.github/workflows/opencode.yml) запускает
+OpenCode-агента на раннере GitHub Actions по вашим комментариям. Что нужно для
+работы: установленная на репозиторий GitHub App
+[opencode-agent](https://github.com/apps/opencode-agent) и секрет
+`ZAI_API_KEY` в **Settings → Secrets and variables → Actions**.
+
+- **События** — `issue_comment` и `pull_request_review_comment`, оба только
+  `types: [created]`: агент вызывается на новый комментарий, а не на
+  редактирование существующего.
+- **Команды** — набор `mentions` оставлен стандартный: `/opencode` или `/oc` в
+  тексте, например `/oc explain this issue` в issue или «исправь это /oc» в
+  комментарии к строке диффа.
+- **Модель** — `zai/glm-5.3-flash`: дешёвая модель того же провайдера (Z.AI),
+  что и у локального агента; для терминала остаётся более сильная модель.
+- **Доступ** — команда обрабатывается только от доверенного участника
+  (`author_association`: `OWNER`, `MEMBER`, `COLLABORATOR`); комментарии ботов
+  игнорируются, чтобы агент не отвечал на собственные сообщения; посторонние
+  авторы и fork-PR (`NONE`, `CONTRIBUTOR`) до задания и секретов не доходят.
+- **Права** — стандартная авторизация GitHub App: `id-token: write` (OIDC-обмен
+  на токен приложения) и `contents: read`; checkout с
+  `persist-credentials: false`.
+- **Ограничения** — `timeout-minutes: 15` на задание; `concurrency` по номеру
+  issue/PR: новый вызов встаёт в очередь, а не отменяет идущий.
+- **share** — включён осознанно: репозиторий публичный, и в ответе агента
+  появляется публичная ссылка на его сессию.
+
+Результат виден в трёх местах: ответ приходит комментарием в тот же issue/PR
+от имени `opencode-agent`, прогон — на вкладке **Actions** (воркфлоу
+`opencode`), ссылка на сессию — внутри ответа. Скиллы и настройки трекера
+агент получает из репозитория: `.agents/skills/` (набор mattpocock/skills) и
+`docs/agents/` (трекер, метки, процесс), поэтому свежий раннер после checkout
+готов к работе без дополнительной установки.
+
 ## Архитектура и документы
 
 - [`docs/adr/`](docs/adr/README.md) — ADR-0001…0011 отдельными файлами
