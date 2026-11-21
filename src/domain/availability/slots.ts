@@ -160,15 +160,28 @@ export async function isBookableSlotStart(
 }
 
 /**
+ * Фильтр кандидатов выдачи по границе минимального запаса (#22, ADR-0014):
+ * из сгенерированных стартов остаются начинающиеся не раньше
+ * `now + MIN_LEAD_TIME_MS` — старт ровно на границе допустим (полуинтервал
+ * сравнения «меньше»). Близкие и уже начавшиеся старты не выдаются, как и
+ * не бронируются — правило одно (сервер — источник истины, ADR-0004).
+ * Чистая функция без БД (шов 3); listFreeSlots применяет её к кандидатам
+ * генератора до вычитания броней.
+ */
+export function slotsFromLeadBoundary(slots: readonly GeneratedSlot[], now: Date): GeneratedSlot[] {
+  return slots.filter((slot) => !isSlotTooSoon(slot.startsAt, now));
+}
+
+/**
  * Свободные слоты типа в периоде (ADR-0011): кандидаты генерируются из
  * рабочих часов (дефолт D3 — пока владелец их не задал), затем вычитаются
  * брони — слот свободен, если не пересекается ни с одной активной бронью
  * любого типа (D12). GLOSSARY «свободный слот»: целиком в будущем и
- * начинается не ранее чем через минимальный запас до звонка (#22) —
- * близкие и уже начавшиеся старты не выдаются, как и не бронируются
- * (правило одно, ADR-004). Спецификация пересечения — intervalsOverlap;
- * предикат запроса — его хранилищный двойник, соответствие пиннится
- * API-тестами.
+ * начинается не ранее чем через минимальный запас до звонка (#22,
+ * ADR-0014) — близкие и уже начавшиеся старты не выдаются, как и не
+ * бронируются (правило одно, ADR-004). Спецификация пересечения —
+ * intervalsOverlap; предикат запроса — его хранилищный двойник,
+ * соответствие пиннится API-тестами.
  */
 export async function listFreeSlots(
   eventTypeId: string,
@@ -186,13 +199,16 @@ export async function listFreeSlots(
   }
 
   const workingHours = await getWorkingHours();
-  const candidates = generateSlots({
-    from: query.from,
-    to: query.to,
-    durationMinutes: eventType.durationMinutes,
-    workingHours,
-    timeZone: getAppTz(),
-  }).filter((slot) => !isSlotTooSoon(slot.startsAt, now));
+  const candidates = slotsFromLeadBoundary(
+    generateSlots({
+      from: query.from,
+      to: query.to,
+      durationMinutes: eventType.durationMinutes,
+      workingHours,
+      timeZone: getAppTz(),
+    }),
+    now,
+  );
   if (candidates.length === 0) {
     return { ok: true, slots: [] };
   }

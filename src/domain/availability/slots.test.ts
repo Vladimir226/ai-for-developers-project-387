@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { bookingWindow, generateSlots, isSlotStartOnGrid, type WorkingDayHours } from './slots';
+import {
+  bookingWindow,
+  generateSlots,
+  isSlotStartOnGrid,
+  slotsFromLeadBoundary,
+  type GeneratedSlot,
+  type WorkingDayHours,
+} from './slots';
 
 // Чистый генератор вычисляемых слотов (ADR-0011): unit-тесты шва 3.
 // Генератор не зависит от «сейчас» — окно [from; to] задаёт вызывающий,
@@ -188,6 +195,45 @@ describe('bookingWindow — окно записи (D6)', () => {
 
     expect(slots[0]?.startsAt.toISOString()).toBe('2026-11-10T06:00:00.000Z'); // вторник 09:00
     expect(slots.every((slot) => slot.startsAt.getTime() > now.getTime())).toBe(true);
+  });
+});
+
+describe('slotsFromLeadBoundary — выдача от границы минимального запаса (#22)', () => {
+  // 12:00 UTC; граница now + 30 минут = 12:30:00.000Z
+  const NOW = new Date('2026-11-09T12:00:00.000Z');
+
+  /** Кандидат-слот [start; start + durationMinutes). */
+  const candidate = (startIso: string, durationMinutes: number): GeneratedSlot => ({
+    startsAt: new Date(startIso),
+    endsAt: new Date(new Date(startIso).getTime() + durationMinutes * 60_000),
+  });
+
+  it('близкие и уже начавшиеся старты не выдаются; старт ровно на границе — выдаётся', () => {
+    const candidates = [
+      candidate('2026-11-09T10:00:00.000Z', 30), // давно прошло — тоже «слишком рано»
+      candidate('2026-11-09T11:59:59.999Z', 30), // начался миллисекунду назад
+      candidate('2026-11-09T12:29:59.999Z', 30), // на миллисекунду ближе границы
+      candidate('2026-11-09T12:30:00.000Z', 30), // ровно now + 30 минут — допустим
+      candidate('2026-11-09T12:30:00.001Z', 30), // на миллисекунду за границей
+      candidate('2026-11-09T13:00:00.000Z', 30), // дальше границы
+    ];
+
+    expect(
+      slotsFromLeadBoundary(candidates, NOW).map((slot) => slot.startsAt.toISOString()),
+    ).toEqual(['2026-11-09T12:30:00.000Z', '2026-11-09T12:30:00.001Z', '2026-11-09T13:00:00.000Z']);
+  });
+
+  it('фильтр, а не пересортировка: порядок и слоты передаются как есть', () => {
+    const candidates = [
+      candidate('2026-11-09T14:00:00.000Z', 60),
+      candidate('2026-11-09T12:30:00.000Z', 15),
+    ];
+
+    expect(slotsFromLeadBoundary(candidates, NOW)).toEqual(candidates);
+  });
+
+  it('пустой список кандидатов — пустой результат', () => {
+    expect(slotsFromLeadBoundary([], NOW)).toEqual([]);
   });
 });
 
