@@ -14,6 +14,8 @@ enum ErrorCode {
   SLOT_ALREADY_BOOKED: "SLOT_ALREADY_BOOKED";
   /** Слот уже начался или прошёл (409). */
   SLOT_IN_PAST: "SLOT_IN_PAST";
+  /** Слот начинается слишком рано: до старта меньше минимального запаса до звонка — 30 минут (#22), времени на подготовку нет (409). */
+  SLOT_TOO_SOON: "SLOT_TOO_SOON";
 }
 
 /** Элемент `error.details` для `VALIDATION_ERROR`. */
@@ -54,7 +56,7 @@ model NotFoundError {
   ...ErrorEnvelope;
 }
 
-/** 409 — конфликт состояния: `SLOT_ALREADY_BOOKED`, `SLOT_IN_PAST`. */
+/** 409 — конфликт состояния: `SLOT_ALREADY_BOOKED`, `SLOT_IN_PAST`, `SLOT_TOO_SOON`. */
 @error
 model ConflictError {
   @statusCode

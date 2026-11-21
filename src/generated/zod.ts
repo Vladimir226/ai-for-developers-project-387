@@ -30,7 +30,13 @@ const CreateBookingRequest = z
   })
   .passthrough();
 const BookingCreated = Booking;
-const ErrorCode = z.enum(['VALIDATION_ERROR', 'NOT_FOUND', 'SLOT_ALREADY_BOOKED', 'SLOT_IN_PAST']);
+const ErrorCode = z.enum([
+  'VALIDATION_ERROR',
+  'NOT_FOUND',
+  'SLOT_ALREADY_BOOKED',
+  'SLOT_IN_PAST',
+  'SLOT_TOO_SOON',
+]);
 const ValidationErrorItem = z.object({ field: z.string(), message: z.string() }).passthrough();
 const ErrorBody = z
   .object({
