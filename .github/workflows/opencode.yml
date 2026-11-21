@@ -1,6 +1,8 @@
 # OpenCode-агент в GitHub Actions: отвечает на команды /opencode и /oc в
 # комментариях к issues и PR (включая комментарии к строкам диффа).
 # Модель, секрет, права и ограничения — в README.md, раздел «Агент в GitHub».
+# Предел запусков на PR — там же, раздел «Предел запусков агента на PR»:
+# бюджет проверяется кодом до вызова модели, отказ публикуется без модели.
 
 name: opencode
 
@@ -32,6 +34,9 @@ jobs:
     permissions:
       id-token: write # OIDC-обмен на токен GitHub App opencode-agent
       contents: read
+      actions: read # счётчик бюджета читает историю запусков (run_attempt)
+      issues: write # отчёты об остановке агента в issues
+      pull-requests: write # отчёты в PR и чтение данных для бюджета
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -39,7 +44,40 @@ jobs:
           fetch-depth: 1
           persist-credentials: false # git-creds не нужны: агент действует токеном App
 
+      # Предел запусков на PR (#19): проверка ДО вызова модели. Для issue
+      # (не PR) шаг пропускается — бюджет действует на pull request.
+      - name: Проверить бюджет агента на PR
+        id: budget
+        if: github.event.issue.pull_request
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/agent-budget.mjs "${{ github.event.issue.number }}"
+
+      # Отдельный шаг без модели публикует отказ: причина, последний SHA и
+      # ссылка на логи. Токен агента не может переписать счётчик.
+      - name: Сообщить об исчерпании бюджета
+        if: steps.budget.outputs.allowed == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          USED: ${{ steps.budget.outputs.used }}
+          LIMIT: ${{ steps.budget.outputs.limit }}
+          HEAD_SHA: ${{ steps.budget.outputs.head_sha }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "<!-- agent-budget -->
+          ## Бюджет агента исчерпан — нужен человек
+
+          Причина: \`limit_exhausted\` — допущено ${USED} запросов агента из ${LIMIT} на этот PR (команды /oc доверенных авторов и повторные запуски).
+
+          Последний SHA: \`${HEAD_SHA}\`
+          Логи: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          Команда обработана **без вызова модели**. Следующее действие выбирает человек: новая попытка не запустится до нового бюджета (новый PR) или изменения лимита."
+          exit 1
+
       - name: Run OpenCode
+        if: steps.budget.outputs.allowed != 'false'
         uses: anomalyco/opencode/github@latest
         env:
           # Провайдер zai в OpenCode читает ключ из ZHIPU_API_KEY (см. models.dev)
@@ -47,3 +85,38 @@ jobs:
         with:
           model: zai/glm-5.3-flash
           share: true # публичная ссылка на сессию в ответе агента (репо публичное)
+
+      # Итог остановки агента публикует отдельный шаг без модели (#19):
+      # тайм-аут задания → timeout; отсутствие ключа/сбой подготовки → infra;
+      # прочий неуспех агента → agent_failed. Человек разбирает по логам.
+      - name: Отчёт — тайм-аут вызова
+        if: cancelled()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const body = `<!-- agent-outcome -->\n## Агент остановлен — нужен человек\n\nПричина: \`timeout\` — задание превысило лимит времени.\n\nЛоги: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const { issue } = context;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issue.number,
+              body,
+            });
+
+      - name: Отчёт — сбой вызова
+        if: failure()
+        uses: actions/github-script@v8
+        env:
+          KEY_PRESENT: ${{ secrets.ZHIPU_API_KEY != '' }}
+        with:
+          script: |
+            const reason = process.env.KEY_PRESENT === 'true' ? 'agent_failed' : 'infra';
+            const hint = reason === 'infra'
+              ? 'Отсутствует ключ модели (ZHIPU_API_KEY) или не подготовлен инструмент.'
+              : 'Агент завершился неуспешно — подробности в логах прогона.';
+            const body = `<!-- agent-outcome -->\n## Агент остановлен — нужен человек\n\nПричина: \`${reason}\`. ${hint}\n\nЛоги: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const { issue } = context;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issue.number,
+              body,
+            });
