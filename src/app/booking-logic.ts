@@ -283,6 +283,20 @@ export function apiFailureFromError(error: unknown): ApiFailure {
   return { kind: 'unknown' };
 }
 
+/**
+ * Требует ли отказ перезагрузки списка слотов: конфликтные ответы сервера
+ * — занято (SLOT_ALREADY_BOOKED), уже прошло (SLOT_IN_PAST), слишком
+ * поздно (SLOT_TOO_SOON, #22) — означают, что список устарел, и страница
+ * перечитывает его, чтобы гость видел фактическое состояние окна
+ * (включая случай «пока заполнялась форма, слот стал ближе 30 минут»).
+ * Остальные сбои список не меняют: ошибки полей — у полей, сети и
+ * неизвестные — повтор попытки с прежним списком, удалённый тип (gone)
+ * возвращает гостя к видам брони.
+ */
+export function needsSlotReload(failure: ApiFailure): boolean {
+  return failure.kind === 'booked' || failure.kind === 'past' || failure.kind === 'soon';
+}
+
 /** Тексты баннера-ошибки над списком окон (макет #13); поля — не баннер. */
 export function bookingBanner(failure: ApiFailure): { title: string; text: string } | null {
   switch (failure.kind) {

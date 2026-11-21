@@ -8,6 +8,8 @@ import {
   countWindows,
   firstOpenDateKey,
   humanDuration,
+  needsSlotReload,
+  type ApiFailure,
 } from './booking-logic';
 
 // Шов 3 (unit): чистая логика публичной страницы (ADR-0004: тонкий UI) —
@@ -238,6 +240,20 @@ describe('apiFailureFromError', () => {
     });
     expect(apiFailureFromError(null)).toEqual({ kind: 'unknown' });
     expect(apiFailureFromError({ foo: 1 })).toEqual({ kind: 'unknown' });
+  });
+});
+
+describe('needsSlotReload — требует ли отказ перезагрузки списка слотов', () => {
+  it.each([
+    ['booked — занято другим гостём', { kind: 'booked' }, true],
+    ['past — слот уже начался', { kind: 'past' }, true],
+    ['soon — слишком поздно записываться (#22)', { kind: 'soon' }, true],
+    ['gone — тип удалён (возврат к видам)', { kind: 'gone' }, false],
+    ['network — сеть недоступна', { kind: 'network' }, false],
+    ['unknown — неизвестный сбой', { kind: 'unknown' }, false],
+    ['invalid — ошибки полей', { kind: 'invalid', fields: {}, messages: [] }, false],
+  ])('%s', (_name, failure, expected) => {
+    expect(needsSlotReload(failure as ApiFailure)).toBe(expected);
   });
 });
 

@@ -13,6 +13,7 @@ import {
   countWindows,
   firstOpenDateKey,
   humanDuration,
+  needsSlotReload,
   type ApiFailure,
   type BookingCalendar,
   type CalendarCell,
@@ -209,11 +210,7 @@ export function BookingFlow({
       }
 
       setFailure(bookingFailure);
-      if (
-        bookingFailure.kind === 'booked' ||
-        bookingFailure.kind === 'past' ||
-        bookingFailure.kind === 'soon'
-      ) {
+      if (needsSlotReload(bookingFailure)) {
         // список должен показать фактическое состояние окна (включая случай
         // «слишком поздно»: пока заполнялась форма, слот стал ближе 30 минут)
         await loadSlots(selectedType.id);
@@ -232,14 +229,12 @@ export function BookingFlow({
     if (selectedType) void loadSlots(selectedType.id);
   }
 
-  // После 409 (занято/прошло/слишком поздно) список перезагружается молча —
-  // возвращаем внимание гостя скроллом, как в прежнем флоу (scrollIntoView
-  // к списку окон выбранного дня; если день опустел — к баннеру над ним).
+  // После конфликтного ответа (занято/прошло/слишком поздно — #22) список
+  // перезагружается молча — возвращаем внимание гостя скроллом, как в
+  // прежнем флоу (scrollIntoView к списку окон выбранного дня; если день
+  // опустел — к баннеру над ним).
   useEffect(() => {
-    if (
-      !failure ||
-      (failure.kind !== 'booked' && failure.kind !== 'past' && failure.kind !== 'soon')
-    ) {
+    if (!failure || !needsSlotReload(failure)) {
       return;
     }
     if (slotsState?.phase !== 'ready') return;
