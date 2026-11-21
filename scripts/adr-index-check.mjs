@@ -16,48 +16,69 @@ import { dirname, join } from 'node:path';
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(scriptDir, '..');
 
-/** Разбор индекса ADR: блоки строк-таблиц — номера в них и стартовая
- * строка блока (1-based), чтобы уметь показывать место разрыва. */
+/** Разбор индекса ADR: блоки строк-таблиц — первая строка, номера ADR в
+ * них и стартовая строка блока (1-based), чтобы уметь показывать место
+ * разрыва. */
 export function parseAdrIndex(readmeText) {
   const blocks = [];
   let current = [];
   let currentStart = 0;
+  let firstText = '';
   let line = 0;
   for (const text of readmeText.split('\n')) {
     line += 1;
     if (/^\|/.test(text)) {
-      if (current.length === 0) currentStart = line;
+      if (current.length === 0) {
+        currentStart = line;
+        firstText = text;
+      }
       const match = text.match(/^\|\s*ADR-(\d{4})\b/);
       current.push(match ? Number(match[1]) : null);
     } else if (current.length > 0) {
-      blocks.push({ startLine: currentStart, numbers: current });
+      blocks.push({ startLine: currentStart, firstLine: firstText, numbers: current });
       current = [];
     }
   }
-  if (current.length > 0) blocks.push({ startLine: currentStart, numbers: current });
+  if (current.length > 0)
+    blocks.push({ startLine: currentStart, firstLine: firstText, numbers: current });
   return blocks;
 }
 
-/** Строки разрывов таблицы индекса: первая строка каждого блока с номерами
- * ADR, идущего после такого же блока — перед ней и стоит пустая строка. */
+/** Блоки таблицы индекса: от блока-шапки («| ADR | Решение | …») до конца.
+ * Любой блок после шапки — пустая строка ВНУТРИ индекса, включая разрыв
+ * сразу после разделителя шапки (замечание 1 авторевью PR #26: шапка и
+ * строки данных образуют один блок строк-таблицы). */
+export function indexBlocks(readmeText) {
+  const blocks = parseAdrIndex(readmeText);
+  const headerIndex = blocks.findIndex((block) => /^\|\s*ADR\s+\|/.test(block.firstLine));
+  return headerIndex === -1 ? null : blocks.slice(headerIndex);
+}
+
+/** Строки разрывов: старт последующих блоков индекса — перед каждой
+ * стоит пустая строка. */
 export function findBreakLines(readmeText) {
-  const breaks = [];
-  let seenRows = false;
-  for (const block of parseAdrIndex(readmeText)) {
-    if (block.numbers.some((n) => n !== null)) {
-      if (seenRows) breaks.push(block.startLine);
-      seenRows = true;
-    }
-  }
-  return breaks;
+  const index = indexBlocks(readmeText);
+  return index ? index.slice(1).map((block) => block.startLine) : [];
+}
+
+/** Русская плюрализация для сообщения линтера (тот же класс форм, что и
+ * в текстах приложения — замечание 3 авторевью PR #26). */
+export function pluralRuTables(n) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'таблицу';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'таблицы';
+  return 'таблиц';
 }
 
 /** Проверка целостности индекса: один блок, полнота и порядок номеров. */
 export function checkAdrIndex(readmeText, fileNumbers) {
   const problems = [];
-  const blocks = parseAdrIndex(readmeText);
-  const rowBlocks = blocks.filter((block) => block.numbers.some((n) => n !== null));
-  const rows = rowBlocks
+  const index = indexBlocks(readmeText);
+  if (!index) {
+    return { ok: false, problems: ['шапка таблицы индекса («| ADR | Решение | …») не найдена'] };
+  }
+  const rows = index
     .map((block) => block.numbers)
     .flat()
     .filter((n) => n !== null);
@@ -69,7 +90,7 @@ export function checkAdrIndex(readmeText, fileNumbers) {
         ? `разрыв перед строкой ${breakLines[0]}`
         : `разрывы перед строками ${breakLines.join(', ')}`;
     problems.push(
-      `строки ADR-индекса разорваны на ${rowBlocks.length} таблицы (${where}) — внутри индекса не должно быть пустых строк`,
+      `строки ADR-индекса разорваны на ${index.length} ${pluralRuTables(index.length)} (${where}) — внутри индекса не должно быть пустых строк`,
     );
   }
   for (const number of [...fileNumbers].sort((a, b) => a - b)) {
