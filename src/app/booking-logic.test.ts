@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MIN_LEAD_TIME_MS } from '@/domain/availability/lead-time';
 import { parseSlotQuery } from '@/lib/validation/slot';
 import {
   apiFailureFromError,
@@ -7,6 +8,8 @@ import {
   countWindows,
   firstOpenDateKey,
   humanDuration,
+  needsSlotReload,
+  type ApiFailure,
 } from './booking-logic';
 
 // Шов 3 (unit): чистая логика публичной страницы (ADR-0004: тонкий UI) —
@@ -190,6 +193,12 @@ describe('apiFailureFromError', () => {
     ).toEqual({ kind: 'past' });
   });
 
+  it('SLOT_TOO_SOON — до начала меньше 30 минут (#22)', () => {
+    expect(
+      apiFailureFromError({ error: { code: 'SLOT_TOO_SOON', message: 'Слишком близкое время' } }),
+    ).toEqual({ kind: 'soon' });
+  });
+
   it('NOT_FOUND — тип события удалён', () => {
     expect(apiFailureFromError({ error: { code: 'NOT_FOUND', message: 'Тип не найден' } })).toEqual(
       {
@@ -234,6 +243,20 @@ describe('apiFailureFromError', () => {
   });
 });
 
+describe('needsSlotReload — требует ли отказ перезагрузки списка слотов', () => {
+  it.each([
+    ['booked — занято другим гостём', { kind: 'booked' }, true],
+    ['past — слот уже начался', { kind: 'past' }, true],
+    ['soon — слишком поздно записываться (#22)', { kind: 'soon' }, true],
+    ['gone — тип удалён (возврат к видам)', { kind: 'gone' }, false],
+    ['network — сеть недоступна', { kind: 'network' }, false],
+    ['unknown — неизвестный сбой', { kind: 'unknown' }, false],
+    ['invalid — ошибки полей', { kind: 'invalid', fields: {}, messages: [] }, false],
+  ])('%s', (_name, failure, expected) => {
+    expect(needsSlotReload(failure as ApiFailure)).toBe(expected);
+  });
+});
+
 describe('bookingBanner', () => {
   it('SLOT_ALREADY_BOOKED — текст как в старом флоу (сохранён)', () => {
     expect(bookingBanner({ kind: 'booked' })).toEqual({
@@ -244,6 +267,22 @@ describe('bookingBanner', () => {
 
   it('тип удалён — свой заголовок', () => {
     expect(bookingBanner({ kind: 'gone' })?.title).toBe('Вид брони больше не доступен');
+  });
+
+  it('SLOT_TOO_SOON — слишком поздно записываться, выберите окно позже (#22)', () => {
+    expect(bookingBanner({ kind: 'soon' })).toEqual({
+      title: 'Слишком поздно записываться',
+      text: 'До начала звонка меньше 30 минут. Список обновлён — выберите окно позже.',
+    });
+  });
+
+  it('пиннинг: минуты в тексте SLOT_TOO_SOON — из MIN_LEAD_TIME_MS (единый источник величины)', () => {
+    // связывает текст баннера с константой домена: смена запаса меняет и
+    // текст, а не только правило выдачи/брони
+    const minutes = MIN_LEAD_TIME_MS / 60_000;
+    expect(bookingBanner({ kind: 'soon' })?.text).toBe(
+      `До начала звонка меньше ${minutes} минут. Список обновлён — выберите окно позже.`,
+    );
   });
 
   it('сетевые и неизвестные сбои — свои заголовки', () => {

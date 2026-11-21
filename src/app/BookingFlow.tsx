@@ -13,6 +13,7 @@ import {
   countWindows,
   firstOpenDateKey,
   humanDuration,
+  needsSlotReload,
   type ApiFailure,
   type BookingCalendar,
   type CalendarCell,
@@ -209,8 +210,9 @@ export function BookingFlow({
       }
 
       setFailure(bookingFailure);
-      if (bookingFailure.kind === 'booked' || bookingFailure.kind === 'past') {
-        // список должен показать фактическое состояние окна
+      if (needsSlotReload(bookingFailure)) {
+        // список должен показать фактическое состояние окна (включая случай
+        // «слишком поздно»: пока заполнялась форма, слот стал ближе 30 минут)
         await loadSlots(selectedType.id);
         router.refresh();
       }
@@ -227,11 +229,14 @@ export function BookingFlow({
     if (selectedType) void loadSlots(selectedType.id);
   }
 
-  // После 409 список перезагружается молча — возвращаем внимание гостя
-  // скроллом, как в прежнем флоу (scrollIntoView к списку окон выбранного
-  // дня; если день опустел — к баннеру над ним).
+  // После конфликтного ответа (занято/прошло/слишком поздно — #22) список
+  // перезагружается молча — возвращаем внимание гостя скроллом, как в
+  // прежнем флоу (scrollIntoView к списку окон выбранного дня; если день
+  // опустел — к баннеру над ним).
   useEffect(() => {
-    if (!failure || (failure.kind !== 'booked' && failure.kind !== 'past')) return;
+    if (!failure || !needsSlotReload(failure)) {
+      return;
+    }
     if (slotsState?.phase !== 'ready') return;
     const target = slots.length > 0 ? slotsRef.current : bannerRef.current;
     target?.scrollIntoView({ behavior: 'smooth', block: 'center' });

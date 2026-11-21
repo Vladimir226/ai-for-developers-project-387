@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { MIN_LEAD_TIME_MS } from '@/domain/availability/lead-time';
 import { schemas } from '@/generated/zod';
 import { getDb } from '@/lib/db/prisma';
 import {
@@ -7,8 +8,10 @@ import {
   getBookings,
   pastIso,
   postBooking,
+  putWorkingHours,
   seedEventTypeViaApi,
   silenceRequestLogs,
+  weekHours,
 } from '@/lib/testing/api';
 import { clearTables, setupTestDatabase } from '@/lib/testing/test-db';
 
@@ -304,6 +307,122 @@ describe('POST /api/v1/bookings — серверный инвариант сло
 
     expect((await bookAt(type60.id, at10)).status).toBe(201);
     expect((await bookAt(type30.id, at11)).status).toBe(201);
+  });
+});
+
+describe('POST /api/v1/bookings — минимальный запас до звонка (#22)', () => {
+  beforeEach(async () => {
+    silenceRequestLogs();
+    await clearTables();
+  });
+
+  // Реальное «сейчас» не контролируем, поэтому старты выбираются
+  // динамически (notes-приём #22): часы 00:00–24:00 на все дни и
+  // длительность 30 минут дают сетку стартов ровно каждые 30 минут UTC —
+  // единственный старт в получасовом окне после now «слишком близкий»,
+  // первый старт после границы now + 30 минут — допустимый.
+  const STEP_MS = 30 * 60 * 1000;
+
+  /**
+   * Анти-флак маржа от обеих границ (#22): старт выбирается не ближе
+   * 2 секунд ни к now (иначе к моменту проверки на сервере ответ уже
+   * SLOT_IN_PAST), ни к границе now + 30 минут (иначе «слишком близкий»
+   * старт превратится в допустимый, пока запрос дойдёт до сервера).
+   */
+  const SAFETY_MS = 2_000;
+
+  /** Первый старт сетки с маржой SAFETY_MS над now — строго будущее даже к моменту вызова route. */
+  function nextGridStart(): { now: number; start: Date } {
+    const now = Date.now();
+    return { now, start: new Date(Math.ceil((now + SAFETY_MS) / STEP_MS) * STEP_MS) };
+  }
+
+  it('близкий слот (старт внутри получаса после now) → 409 SLOT_TOO_SOON; повтор — тот же ответ, бронь не создаётся', async ({
+    skip,
+  }) => {
+    const type = await seedEventTypeViaApi({ durationMinutes: 30 });
+    const put = await putWorkingHours({
+      days: weekHours({ startMinutes: 0, endMinutes: 1440 }, []),
+    });
+    expect(put.status).toBe(200);
+
+    const { now, start } = nextGridStart();
+    // Граничный момент: старт попал в последние 2 секунды перед границей
+    // (now почти ровно на сетке) — близкого слота в природе нет. Пропуск
+    // видимый, с причиной: тихий return прошёл бы тест «зелёно» без
+    // единой проверки (вакуумный прогон вместо покрытия).
+    if (start.getTime() >= now + STEP_MS - SAFETY_MS) {
+      skip('старт сетки ближе 2 секунд к границе запаса — близкого слота нет');
+      return;
+    }
+
+    const response = await postBooking({
+      eventTypeId: type.id,
+      startsAt: start.toISOString(),
+      bookerName: 'Мария',
+      bookerContact: 'telegram: @maria',
+    });
+
+    expect(response.status).toBe(409);
+    const body = schemas.ErrorEnvelope.parse(await response.json());
+    expect(body.error.code).toBe('SLOT_TOO_SOON');
+    // пиннинг текста: минуты — из константы домена (единый источник), для
+    // текущей величины — литерал «30 минут»
+    expect(body.error.message).toBe(
+      `До начала звонка меньше ${MIN_LEAD_TIME_MS / 60_000} минут — выберите слот позже`,
+    );
+
+    // повторная попытка — тот же ответ, слот не занимается
+    const retry = await postBooking({
+      eventTypeId: type.id,
+      startsAt: start.toISOString(),
+      bookerName: 'Пётр',
+      bookerContact: 'phone:+79160000000',
+    });
+    expect(retry.status).toBe(409);
+    expect(schemas.ErrorEnvelope.parse(await retry.json()).error.code).toBe('SLOT_TOO_SOON');
+
+    const bookings = schemas.BookingList.parse(await (await getBookings()).json());
+    expect(bookings.bookings).toEqual([]);
+  });
+
+  it('ближайший допустимый старт (не раньше now + 30 минут) → 201', async () => {
+    const type = await seedEventTypeViaApi({ durationMinutes: 30 });
+    const put = await putWorkingHours({
+      days: weekHours({ startMinutes: 0, endMinutes: 1440 }, []),
+    });
+    expect(put.status).toBe(200);
+
+    // первый старт сетки за границей запаса с маржой SAFETY_MS: к моменту
+    // проверки на сервере старт всё ещё не ближе границы now + 30 минут
+    const now = Date.now();
+    const firstAllowed = new Date(Math.ceil((now + STEP_MS + SAFETY_MS) / STEP_MS) * STEP_MS);
+
+    const response = await postBooking({
+      eventTypeId: type.id,
+      startsAt: firstAllowed.toISOString(),
+      bookerName: 'Мария',
+      bookerContact: 'telegram: @maria',
+    });
+
+    expect(response.status).toBe(201);
+    const body = schemas.BookingCreated.parse(await response.json());
+    expect(body.startsAt).toBe(firstAllowed.toISOString());
+  });
+
+  it('прошлое важнее «слишком рано»: прошедший старт → 409 SLOT_IN_PAST, не SLOT_TOO_SOON', async () => {
+    const type = await seedEventTypeViaApi({ durationMinutes: 30 });
+
+    // прошлый старт подпадает под оба правила, но приоритет проверок выше
+    const response = await postBooking({
+      eventTypeId: type.id,
+      startsAt: pastIso(1),
+      bookerName: 'Мария',
+      bookerContact: 'telegram: @maria',
+    });
+
+    expect(response.status).toBe(409);
+    expect(schemas.ErrorEnvelope.parse(await response.json()).error.code).toBe('SLOT_IN_PAST');
   });
 });
 

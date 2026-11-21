@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createBooking, listBookings, serializeBooking } from '@/domain/bookings/bookings';
+import { MIN_LEAD_TIME_MS } from '@/domain/availability/lead-time';
 import { parseBodyOr } from '@/lib/http/json-body';
 import { jsonError } from '@/lib/http/json-error';
 import { withRequestLogging } from '@/lib/http/with-request-logging';
@@ -9,7 +10,8 @@ import { parseCreateBookingBody, parseUpcomingParam } from '@/lib/validation/boo
 // конверт ошибок — ADR-005. Занятость — наложение интервалов с любой
 // активной бронью, включая другие типы (D12), в транзакции с предикатом.
 // Серверный инвариант слота (ADR-004, D6) — старт только из окна записи на
-// сетке рабочих часов. Битый JSON и невалидные поля — единый 422
+// сетке рабочих часов. Минимальный запас до звонка (#22) — старт не раньше
+// чем через 30 минут. Битый JSON и невалидные поля — единый 422
 // VALIDATION_ERROR (parseBodyOr; аддендум ADR-0005 от 2026-11-07).
 
 export const dynamic = 'force-dynamic';
@@ -38,6 +40,17 @@ export const POST = withRequestLogging(async (request) => {
     }
     if (result.reason === 'slot-in-past') {
       return jsonError('SLOT_IN_PAST', 409, 'Слот уже начался или прошёл');
+    }
+    if (result.reason === 'slot-too-soon') {
+      // Минимальный запас (#22, ADR-0014): слот будущий, но записываться
+      // поздно — у владельца не остаётся времени на подготовку к звонку.
+      // Величина — из константы домена, текст не рассинхронизируется с
+      // правилом (для 30 форма «минут» корректна).
+      return jsonError(
+        'SLOT_TOO_SOON',
+        409,
+        `До начала звонка меньше ${MIN_LEAD_TIME_MS / 60_000} минут — выберите слот позже`,
+      );
     }
     if (result.reason === 'invalid-slot-start') {
       // Серверный инвариант (ADR-004, D6): старт не является свободным

@@ -1,3 +1,4 @@
+import { MIN_LEAD_TIME_MS } from '@/domain/availability/lead-time';
 import { formatTimeRange } from '@/lib/time/display';
 
 // Чистая логика публичной страницы бронирования (ADR-0004: UI тонкий, правил
@@ -237,6 +238,7 @@ export function humanDuration(minutes: number): string {
 export type ApiFailure =
   | { kind: 'booked' } // SLOT_ALREADY_BOOKED
   | { kind: 'past' } // SLOT_IN_PAST
+  | { kind: 'soon' } // SLOT_TOO_SOON — до начала меньше минимального запаса (#22)
   | { kind: 'gone' } // NOT_FOUND — тип события удалён
   | { kind: 'invalid'; fields: Record<string, string>; messages: string[] }
   | { kind: 'network' }
@@ -256,6 +258,7 @@ export function apiFailureFromError(error: unknown): ApiFailure {
 
   if (body.code === 'SLOT_ALREADY_BOOKED') return { kind: 'booked' };
   if (body.code === 'SLOT_IN_PAST') return { kind: 'past' };
+  if (body.code === 'SLOT_TOO_SOON') return { kind: 'soon' };
   if (body.code === 'NOT_FOUND') return { kind: 'gone' };
 
   if (body.code === 'VALIDATION_ERROR') {
@@ -280,6 +283,20 @@ export function apiFailureFromError(error: unknown): ApiFailure {
   return { kind: 'unknown' };
 }
 
+/**
+ * Требует ли отказ перезагрузки списка слотов: конфликтные ответы сервера
+ * — занято (SLOT_ALREADY_BOOKED), уже прошло (SLOT_IN_PAST), слишком
+ * поздно (SLOT_TOO_SOON, #22) — означают, что список устарел, и страница
+ * перечитывает его, чтобы гость видел фактическое состояние окна
+ * (включая случай «пока заполнялась форма, слот стал ближе 30 минут»).
+ * Остальные сбои список не меняют: ошибки полей — у полей, сети и
+ * неизвестные — повтор попытки с прежним списком, удалённый тип (gone)
+ * возвращает гостя к видам брони.
+ */
+export function needsSlotReload(failure: ApiFailure): boolean {
+  return failure.kind === 'booked' || failure.kind === 'past' || failure.kind === 'soon';
+}
+
 /** Тексты баннера-ошибки над списком окон (макет #13); поля — не баннер. */
 export function bookingBanner(failure: ApiFailure): { title: string; text: string } | null {
   switch (failure.kind) {
@@ -292,6 +309,13 @@ export function bookingBanner(failure: ApiFailure): { title: string; text: strin
       return {
         title: 'Это время уже прошло',
         text: 'Слот начался, пока вы заполняли форму. Список обновлён — выберите другое окно.',
+      };
+    case 'soon':
+      return {
+        title: 'Слишком поздно записываться',
+        // минуты — из константы домена (#22, ADR-0014): текст баннера не
+        // рассинхронизируется с правилом (для 30 форма «минут» корректна)
+        text: `До начала звонка меньше ${MIN_LEAD_TIME_MS / 60_000} минут. Список обновлён — выберите окно позже.`,
       };
     case 'gone':
       return {
