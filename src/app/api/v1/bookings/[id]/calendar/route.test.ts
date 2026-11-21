@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDb } from '@/lib/db/prisma';
 import { schemas } from '@/generated/zod';
 import {
@@ -54,6 +54,31 @@ describe('GET /api/v1/bookings/{id}/calendar', () => {
     expect(ics).toContain(`DTSTART:${isoToIcsUtc(booking.startsAt)}`);
     expect(ics).toContain(`DTEND:${isoToIcsUtc(booking.endsAt)}`);
     expect(ics).toContain(`DTSTAMP:${isoToIcsUtc(booking.createdAt)}`); // момент создания
+  });
+
+  it('домен UID события — из ICS_UID_DOMAIN, по умолчанию book-a-call.local', async () => {
+    const type = await seedEventTypeViaApi();
+    const created = await postBooking({
+      eventTypeId: type.id,
+      startsAt: futureWorkingSlotStart().toISOString(),
+      bookerName: 'Анна',
+      bookerContact: 'phone:+79160000000',
+    });
+    const booking = schemas.BookingCreated.parse(await created.json());
+
+    // домен сервиса в UID настраивается окружением (US-10), чтение — на
+    // каждый запрос: смена env видна без пересборки
+    expect(await (await getBookingCalendar(booking.id)).text()).toContain(
+      `UID:${booking.id}@book-a-call.local`,
+    );
+
+    vi.stubEnv('ICS_UID_DOMAIN', 'calls.example.com');
+    try {
+      const response = await getBookingCalendar(booking.id);
+      expect(await response.text()).toContain(`UID:${booking.id}@calls.example.com`);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('неизвестный id → 404 NOT_FOUND в едином конверте', async () => {

@@ -1,5 +1,6 @@
 import {
   expect,
+  test,
   type APIRequestContext,
   type APIResponse,
   type Locator,
@@ -53,6 +54,39 @@ export async function seedEventType(
   return (await response.json()) as EventTypeJson;
 }
 
+// Сеяние с уборкой (общее для сценариев спецификации #9 и #37): БД одна на
+// прогон, а smoke проверяет на /admin пустое состояние «Брони» — сеянные типы
+// удаляются после каждого теста, каскад D4 убирает и брони. Playwright грузит
+// каждый spec-файл отдельным графом модулей, поэтому состояние Set не пере
+// текает между сценариями.
+
+const seededTypeIds = new Set<string>();
+
+/** Сеет тип события и регистрирует его для уборки после теста. */
+export async function seedAndTrack(
+  request: APIRequestContext,
+  draft: { title: string; description?: string; durationMinutes: number },
+): Promise<EventTypeJson> {
+  const type = await seedEventType(request, draft);
+  seededTypeIds.add(type.id);
+  return type;
+}
+
+/**
+ * Регистрирует уборку после каждого теста: удаляет типы, сеянные через
+ * seedAndTrack. Вызывать на верхнем уровне spec-файла (хук закрепляется за
+ * файлом, вызывающим функцию во время загрузки).
+ */
+export function cleanupSeededTypesAfterEach(): void {
+  test.afterEach(async ({ request }) => {
+    for (const id of seededTypeIds) {
+      const response = await request.delete(`/api/v1/event-types/${id}`);
+      expect(response.status(), `уборка сеянного типа ${id} (каскад D4)`).toBe(204);
+    }
+    seededTypeIds.clear();
+  });
+}
+
 /** Свободные слоты типа — тот же ответ, на котором гость строит календарь. */
 export async function freeSlots(request: APIRequestContext, typeId: string): Promise<SlotJson[]> {
   const response = await request.get(`/api/v1/event-types/${typeId}/slots`);
@@ -94,6 +128,22 @@ export function dayTitle(dateKey: string): string {
 /** Подпись слота «10:00–10:30» — тот же формат, что рисует публичная страница. */
 export function slotTimeLabel(slot: SlotJson): string {
   return formatTimeRange(slot.startsAt, slot.endsAt, APP_TZ);
+}
+
+// ── Метки ICS-файла ──────────────────────────────────────────────────────────
+
+/**
+ * Метка базового UTC-формата RFC 5545 (YYYYMMDDTHHMMSSZ, ADR-0009) из
+ * ISO-строки ответа API. Нарочно независима от доменной icsUtc — зеркало
+ * формата в сценарии, а не импорт реализации.
+ */
+export function icsUtcFromIso(iso: string): string {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  const at = new Date(iso);
+  return (
+    `${at.getUTCFullYear()}${pad(at.getUTCMonth() + 1)}${pad(at.getUTCDate())}` +
+    `T${pad(at.getUTCHours())}${pad(at.getUTCMinutes())}${pad(at.getUTCSeconds())}Z`
+  );
 }
 
 // ── День со свободными окнами ────────────────────────────────────────────────

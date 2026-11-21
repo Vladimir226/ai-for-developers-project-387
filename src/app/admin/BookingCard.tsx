@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { bookingCalendarUrl } from '@/lib/booking-calendar-url';
 import { createApiClient } from '@/lib/sdk/client';
 import { cancelFailureNotice, failureFromApiError, type BookingCardData } from './admin-logic';
 
@@ -99,7 +100,7 @@ export function BookingCard({ booking }: { booking: BookingCardData }) {
                 без SDK и router.refresh — навигация-скачивание, исключение
                 из ADR-0004 по ADR-0013 */}
             <a
-              href={`/api/v1/bookings/${booking.id}/calendar`}
+              href={bookingCalendarUrl(booking.id)}
               title="Скачать файл события .ics для импорта в календарь"
               className="h-10 px-4 rounded-xl border border-line text-[13.5px] font-semibold text-sage hover:border-sage/50 hover:bg-sage-soft transition"
             >

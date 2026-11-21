@@ -1,17 +1,18 @@
 import { readFile } from 'node:fs/promises';
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
+  cleanupSeededTypesAfterEach,
   dayTitle,
   firstDayWithSlots,
   freeSlots,
+  icsUtcFromIso,
   openDay,
   postBooking,
-  seedEventType,
+  seedAndTrack,
   slotButton,
   slotTimeLabel,
   slotsSection,
   upcomingBookings,
-  type EventTypeJson,
 } from './helpers';
 
 // Браузерный сценарий шва 2 по новой модели (аддендум №2 спеки, #37):
@@ -30,26 +31,7 @@ import {
 // Уборка: БД одна на прогон, а smoke проверяет на /admin пустое состояние
 // «Брони» — после каждого теста сеянные типы удаляются (каскад D4 убирает
 // и брони), smoke видит чистый список.
-
-const seededTypeIds = new Set<string>();
-
-/** Сеет тип события и регистрирует его для уборки после теста. */
-async function seedAndTrack(
-  request: APIRequestContext,
-  draft: { title: string; description?: string; durationMinutes: number },
-): Promise<EventTypeJson> {
-  const type = await seedEventType(request, draft);
-  seededTypeIds.add(type.id);
-  return type;
-}
-
-test.afterEach(async ({ request }) => {
-  for (const id of seededTypeIds) {
-    const response = await request.delete(`/api/v1/event-types/${id}`);
-    expect(response.status(), `уборка сеянного типа ${id} (каскад D4)`).toBe(204);
-  }
-  seededTypeIds.clear();
-});
+cleanupSeededTypesAfterEach();
 
 test.describe('выбор типа → календарь → слот → бронь', () => {
   test('гость бронирует «Созвон 30», слот исчезает из свободных, бронь видна владельцу', async ({
@@ -288,11 +270,6 @@ test.describe('выбор типа → календарь → слот → бр�
     expect(ics).toContain('BEGIN:VEVENT');
     expect(ics).toContain(`UID:${mine!.id}@book-a-call.local`);
     expect(ics).toContain('SUMMARY:Воркшоп 45 — Анна');
-    const pad = (value: number): string => String(value).padStart(2, '0');
-    const start = new Date(slot.startsAt);
-    const dtstart =
-      `${start.getUTCFullYear()}${pad(start.getUTCMonth() + 1)}${pad(start.getUTCDate())}` +
-      `T${pad(start.getUTCHours())}${pad(start.getUTCMinutes())}${pad(start.getUTCSeconds())}Z`;
-    expect(ics).toContain(`DTSTART:${dtstart}`);
+    expect(ics).toContain(`DTSTART:${icsUtcFromIso(slot.startsAt)}`);
   });
 });

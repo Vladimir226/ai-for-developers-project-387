@@ -1,5 +1,6 @@
 import { vi } from 'vitest';
 import type { z } from 'zod';
+import { bookingCalendarUrl } from '@/lib/booking-calendar-url';
 import { schemas } from '@/generated/zod';
 
 // Хелперы шва 1 (integration): вызовы Route Handlers новой модели
@@ -210,6 +211,6 @@ export function deleteBooking(id: string): Promise<Response> {
 
 export function getBookingCalendar(id: string): Promise<Response> {
   return import('@/app/api/v1/bookings/[id]/calendar/route').then(({ GET }) =>
-    GET(new Request(`${BASE}/api/v1/bookings/${id}/calendar`), { params: Promise.resolve({ id }) }),
+    GET(new Request(`${BASE}${bookingCalendarUrl(id)}`), { params: Promise.resolve({ id }) }),
   );
 }
