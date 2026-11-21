@@ -93,4 +93,37 @@ describe('buildBookingIcs', () => {
 
     expect(property(ics, 'DESCRIPTION')).toBe('phone:+79160000000\\nПозвонить в Telegram');
   });
+
+  it('экранирует спецсимволы TEXT (US-8): запятые, переводы строк; кавычки проходят как есть', () => {
+    const ics = buildBookingIcs(
+      makeBooking({
+        bookerName: 'Иван, Иванов; "Ваня"\\мл.',
+        bookerContact: 'email:ivan,@example.com',
+        comment: 'первая строка\nвторая, строка; слэш \\ здесь',
+      }),
+    );
+
+    expect(property(ics, 'SUMMARY')).toBe('Консультация — Иван\\, Иванов\\; "Ваня"\\\\мл.');
+    expect(property(ics, 'DESCRIPTION')).toBe(
+      'email:ivan\\,@example.com\\nпервая строка\\nвторая\\, строка\\; слэш \\\\ здесь',
+    );
+  });
+
+  it('свёртка длинных строк (RFC 5545 §3.1): физические строки ≤75 октет, развёртка восстанавливает значение', () => {
+    const octets = (text: string): number => new TextEncoder().encode(text).length;
+    const longName = 'Г'.repeat(60); // 120 октет — кириллица по два
+    const longComment = 'з'.repeat(80); // 160 октет
+    const ics = buildBookingIcs(makeBooking({ bookerName: longName, comment: longComment }));
+
+    // каждая физическая строка (без CRLF) укладывается в лимит октет
+    for (const physical of ics.split('\r\n')) {
+      expect(octets(physical)).toBeLessThanOrEqual(75);
+    }
+    // продолжения свёртки начинаются с пробела
+    expect(ics.split('\r\n').filter((line) => line.startsWith(' ')).length).toBeGreaterThan(0);
+
+    // развёртка восстанавливает полные значения — разрез не испортил символы
+    expect(property(ics, 'SUMMARY')).toBe(`Консультация — ${longName}`);
+    expect(property(ics, 'DESCRIPTION')).toBe(`phone:+79160000000\\n${longComment}`);
+  });
 });
