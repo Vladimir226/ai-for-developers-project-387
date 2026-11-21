@@ -1,0 +1,89 @@
+# Браузерная проверка PR из точного head SHA автора (шаг 4, #19). checkout
+# по pull_request без ref берёт временный merge-коммит, поэтому версия
+# автора проверяется явно: github.event.pull_request.head.sha записывается
+# в файл вместе с фактическим git rev-parse HEAD, который человек сверяет
+# с head PR перед мержем.
+#
+# Задание без секрета модели: только e2e на живом сервере и артефакт.
+# trace включён явно (--trace on) — остаётся и для успешных прогонов.
+# Консультирующая проверка: статус не входит в обязательные проверки main,
+# решением о мерже руководит обязательный check плюс этот артефакт.
+
+name: pr-evidence
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  e2e-evidence:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    concurrency:
+      group: pr-evidence-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout (версия автора, не merge-коммит)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Записать проверяемую версию
+        run: |
+          mkdir -p evidence
+          {
+            echo "Проверенная версия PR #$PULL_NUMBER"
+            echo "PR head SHA: ${HEAD_SHA}"
+            echo "git rev-parse HEAD: $(git rev-parse HEAD)"
+            echo "Проверено (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > evidence/result.txt
+        env:
+          PULL_NUMBER: ${{ github.event.pull_request.number }}
+
+      - name: E2E на живом сервере (trace включён явно)
+        run: |
+          npm run build
+          if npx playwright test --trace on; then
+            echo "RESULT: e2e прошли (основной и соседние сценарии)" >> evidence/result.txt
+          else
+            status=$?
+            echo "RESULT: e2e упали (exit ${status})" >> evidence/result.txt
+            exit "$status"
+          fi
+
+      - name: Собрать артефакт
+        if: always()
+        run: |
+          cp -R test-results evidence/traces 2>/dev/null || true
+          cp -R playwright-report evidence/report 2>/dev/null || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-evidence-${{ env.HEAD_SHA }}
+          path: evidence
+          if-no-files-found: error
