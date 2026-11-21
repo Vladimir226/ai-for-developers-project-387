@@ -16,33 +16,60 @@ import { dirname, join } from 'node:path';
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(scriptDir, '..');
 
-/** Разбор индекса ADR: блоки строк-таблиц и номера в них. */
+/** Разбор индекса ADR: блоки строк-таблиц — номера в них и стартовая
+ * строка блока (1-based), чтобы уметь показывать место разрыва. */
 export function parseAdrIndex(readmeText) {
   const blocks = [];
   let current = [];
-  for (const line of readmeText.split('\n')) {
-    if (/^\|/.test(line)) {
-      const match = line.match(/^\|\s*ADR-(\d{4})\b/);
+  let currentStart = 0;
+  let line = 0;
+  for (const text of readmeText.split('\n')) {
+    line += 1;
+    if (/^\|/.test(text)) {
+      if (current.length === 0) currentStart = line;
+      const match = text.match(/^\|\s*ADR-(\d{4})\b/);
       current.push(match ? Number(match[1]) : null);
     } else if (current.length > 0) {
-      blocks.push(current);
+      blocks.push({ startLine: currentStart, numbers: current });
       current = [];
     }
   }
-  if (current.length > 0) blocks.push(current);
+  if (current.length > 0) blocks.push({ startLine: currentStart, numbers: current });
   return blocks;
+}
+
+/** Строки разрывов таблицы индекса: первая строка каждого блока с номерами
+ * ADR, идущего после такого же блока — перед ней и стоит пустая строка. */
+export function findBreakLines(readmeText) {
+  const breaks = [];
+  let seenRows = false;
+  for (const block of parseAdrIndex(readmeText)) {
+    if (block.numbers.some((n) => n !== null)) {
+      if (seenRows) breaks.push(block.startLine);
+      seenRows = true;
+    }
+  }
+  return breaks;
 }
 
 /** Проверка целостности индекса: один блок, полнота и порядок номеров. */
 export function checkAdrIndex(readmeText, fileNumbers) {
   const problems = [];
   const blocks = parseAdrIndex(readmeText);
-  const rowBlocks = blocks.filter((block) => block.some((n) => n !== null));
-  const rows = rowBlocks.flat().filter((n) => n !== null);
+  const rowBlocks = blocks.filter((block) => block.numbers.some((n) => n !== null));
+  const rows = rowBlocks
+    .map((block) => block.numbers)
+    .flat()
+    .filter((n) => n !== null);
 
-  if (rowBlocks.length > 1) {
+  const breakLines = findBreakLines(readmeText);
+  if (breakLines.length > 0) {
+    const where =
+      breakLines.length === 1
+        ? `разрыв перед строкой ${breakLines[0]}`
+        : `разрывы перед строками ${breakLines.join(', ')}`;
     problems.push(
-      `строки ADR-индекса разорваны на ${rowBlocks.length} таблицы — внутри индекса не должно быть пустых строк`,
+      `строки ADR-индекса разорваны на ${rowBlocks.length} таблицы (${where}) — внутри индекса не должно быть пустых строк`,
     );
   }
   for (const number of [...fileNumbers].sort((a, b) => a - b)) {

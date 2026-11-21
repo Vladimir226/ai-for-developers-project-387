@@ -1,7 +1,11 @@
 // Типы для scripts/adr-index-check.mjs (юнит-тесты импортируют чистую
 // логику; сам скрипт — plain JS, линтер запускает его «node …»).
 
-export function parseAdrIndex(readmeText: string): (number | null)[][];
+export function parseAdrIndex(
+  readmeText: string,
+): { startLine: number; numbers: (number | null)[] }[];
+
+export function findBreakLines(readmeText: string): number[];
 
 export function checkAdrIndex(
   readmeText: string,
