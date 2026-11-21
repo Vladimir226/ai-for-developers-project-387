@@ -42,7 +42,8 @@ jobs:
       - name: Run OpenCode
         uses: anomalyco/opencode/github@latest
         env:
-          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          # Провайдер zai в OpenCode читает ключ из ZHIPU_API_KEY (см. models.dev)
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
         with:
           model: zai/glm-5.3-flash
           share: true # публичная ссылка на сессию в ответе агента (репо публичное)

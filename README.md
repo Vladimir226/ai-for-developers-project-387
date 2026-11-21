@@ -351,7 +351,8 @@ npm run test:e2e
 OpenCode-агента на раннере GitHub Actions по вашим комментариям. Что нужно для
 работы: установленная на репозиторий GitHub App
 [opencode-agent](https://github.com/apps/opencode-agent) и секрет
-`ZAI_API_KEY` в **Settings → Secrets and variables → Actions**.
+`ZHIPU_API_KEY` (ключ платформы Z.AI) в **Settings → Secrets and variables →
+Actions** — провайдер `zai` в OpenCode читает ключ именно из этой переменной.
 
 - **События** — `issue_comment` и `pull_request_review_comment`, оба только
   `types: [created]`: агент вызывается на новый комментарий, а не на
@@ -360,7 +361,8 @@ OpenCode-агента на раннере GitHub Actions по вашим ком�
   тексте, например `/oc explain this issue` в issue или «исправь это /oc» в
   комментарии к строке диффа.
 - **Модель** — `zai/glm-5.3-flash`: дешёвая модель того же провайдера (Z.AI),
-  что и у локального агента; для терминала остаётся более сильная модель.
+  что и у локального агента; для терминала остаётся более сильная модель. Ключ
+  лежит в секрете `ZHIPU_API_KEY`.
 - **Доступ** — команда обрабатывается только от доверенного участника
   (`author_association`: `OWNER`, `MEMBER`, `COLLABORATOR`); комментарии ботов
   игнорируются, чтобы агент не отвечал на собственные сообщения; посторонние
