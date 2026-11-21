@@ -1,12 +1,12 @@
 import { readFile } from 'node:fs/promises';
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
+  cleanupSeededTypesAfterEach,
   firstDayWithSlots,
   freeSlots,
   postBooking,
-  seedEventType,
+  seedAndTrack,
   upcomingBookings,
-  type EventTypeJson,
 } from './helpers';
 
 // Браузерный сценарий шва 2 по спецификации #9 (тикет #11): владелец видит
@@ -19,28 +19,10 @@ import {
 // На публичной «Предстоящие записи» кнопки нет (out of scope #9).
 //
 // Брони сеются прямым POST (сервер настоящий, без подмен API — D7), уборка —
-// как в booking-flow: afterEach удаляет сеянные типы, каскад D4 убирает брони,
-// smoke видит на /admin чистое состояние.
-
-const seededTypeIds = new Set<string>();
-
-/** Сеет тип события и регистрирует его для уборки после теста. */
-async function seedAndTrack(
-  request: APIRequestContext,
-  draft: { title: string; description?: string; durationMinutes: number },
-): Promise<EventTypeJson> {
-  const type = await seedEventType(request, draft);
-  seededTypeIds.add(type.id);
-  return type;
-}
-
-test.afterEach(async ({ request }) => {
-  for (const id of seededTypeIds) {
-    const response = await request.delete(`/api/v1/event-types/${id}`);
-    expect(response.status(), `уборка сеянного типа ${id} (каскад D4)`).toBe(204);
-  }
-  seededTypeIds.clear();
-});
+// общий с booking-flow seedAndTrack + cleanupSeededTypesAfterEach из helpers:
+// afterEach удаляет сеянные типы, каскад D4 убирает брони, smoke видит на
+// /admin чистое состояние.
+cleanupSeededTypesAfterEach();
 
 test.describe('владелец: «Добавить в календарь» в разделе «Брони»', () => {
   test('кнопка на карточке каждой предстоящей брони ведёт на файл этой брони и скачивает .ics', async ({
