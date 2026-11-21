@@ -209,8 +209,13 @@ export function BookingFlow({
       }
 
       setFailure(bookingFailure);
-      if (bookingFailure.kind === 'booked' || bookingFailure.kind === 'past') {
-        // список должен показать фактическое состояние окна
+      if (
+        bookingFailure.kind === 'booked' ||
+        bookingFailure.kind === 'past' ||
+        bookingFailure.kind === 'soon'
+      ) {
+        // список должен показать фактическое состояние окна (включая случай
+        // «слишком поздно»: пока заполнялась форма, слот стал ближе 30 минут)
         await loadSlots(selectedType.id);
         router.refresh();
       }
@@ -227,11 +232,16 @@ export function BookingFlow({
     if (selectedType) void loadSlots(selectedType.id);
   }
 
-  // После 409 список перезагружается молча — возвращаем внимание гостя
-  // скроллом, как в прежнем флоу (scrollIntoView к списку окон выбранного
-  // дня; если день опустел — к баннеру над ним).
+  // После 409 (занято/прошло/слишком поздно) список перезагружается молча —
+  // возвращаем внимание гостя скроллом, как в прежнем флоу (scrollIntoView
+  // к списку окон выбранного дня; если день опустел — к баннеру над ним).
   useEffect(() => {
-    if (!failure || (failure.kind !== 'booked' && failure.kind !== 'past')) return;
+    if (
+      !failure ||
+      (failure.kind !== 'booked' && failure.kind !== 'past' && failure.kind !== 'soon')
+    ) {
+      return;
+    }
     if (slotsState?.phase !== 'ready') return;
     const target = slots.length > 0 ? slotsRef.current : bannerRef.current;
     target?.scrollIntoView({ behavior: 'smooth', block: 'center' });

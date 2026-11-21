@@ -190,6 +190,12 @@ describe('apiFailureFromError', () => {
     ).toEqual({ kind: 'past' });
   });
 
+  it('SLOT_TOO_SOON — до начала меньше 30 минут (#22)', () => {
+    expect(
+      apiFailureFromError({ error: { code: 'SLOT_TOO_SOON', message: 'Слишком близкое время' } }),
+    ).toEqual({ kind: 'soon' });
+  });
+
   it('NOT_FOUND — тип события удалён', () => {
     expect(apiFailureFromError({ error: { code: 'NOT_FOUND', message: 'Тип не найден' } })).toEqual(
       {
@@ -244,6 +250,13 @@ describe('bookingBanner', () => {
 
   it('тип удалён — свой заголовок', () => {
     expect(bookingBanner({ kind: 'gone' })?.title).toBe('Вид брони больше не доступен');
+  });
+
+  it('SLOT_TOO_SOON — слишком поздно записываться, выберите окно позже (#22)', () => {
+    expect(bookingBanner({ kind: 'soon' })).toEqual({
+      title: 'Слишком поздно записываться',
+      text: 'До начала звонка меньше 30 минут. Список обновлён — выберите окно позже.',
+    });
   });
 
   it('сетевые и неизвестные сбои — свои заголовки', () => {
