@@ -28,6 +28,8 @@
 | ADR-0012 | Публичная страница «Предстоящие записи» (/bookings): все предстоящие брони всех гостей, read-only, без auth; существующий эндпоинт, без изменений контракта | Accepted                   | [0012-public-upcoming-bookings.md](0012-public-upcoming-bookings.md)             |
 | ADR-0013 | Файл `.ics` брони без авторизации (`GET /api/v1/bookings/{id}/calendar`) вместо OAuth-синхронизации и webcal-фида; кнопка-ссылка — исключение из ADR-0004   | Accepted                   | [0013-ics-download-no-auth.md](0013-ics-download-no-auth.md)                     |
 
+| ADR-0014 | Минимальный запас до звонка — 30 минут: константа домена `MIN_LEAD_TIME_MS`, единое правило выдачи и брони, граница включена, 409 `SLOT_TOO_SOON`, без настроек | Accepted | [0014-min-lead-time.md](0014-min-lead-time.md) |
+
 ## Как добавить новый ADR
 
 1. Новый файл `docs/adr/00NN-slug.md` (номер — максимальный существующий +1,
