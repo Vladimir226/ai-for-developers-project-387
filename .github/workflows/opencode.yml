@@ -83,6 +83,7 @@ jobs:
           exit 1
 
       - name: Run OpenCode
+        id: agent
         if: steps.budget.outputs.allowed != 'false'
         uses: anomalyco/opencode/github@latest
         env:
@@ -117,19 +118,23 @@ jobs:
         uses: actions/github-script@v8
         env:
           KEY_PRESENT: ${{ secrets.ZHIPU_API_KEY != '' }}
-          # Сбой самого шага бюджета — модель не запускалась: это подготовка,
-          # а не неуспех агента (замечание 3 повторного авторевью)
+          # Сбой подготовки классифицируется по итогам самих шагов: крах
+          # шага бюджета или пропуск шага модели (упала более ранняя
+          # подготовка, например checkout) — это infra, а не неуспех агента
+          # (замечания 3 повторного и третьего авторевью)
           BUDGET_CONCLUSION: ${{ steps.budget.conclusion }}
+          AGENT_CONCLUSION: ${{ steps.agent.conclusion }}
         with:
           script: |
+            const agentRan = process.env.AGENT_CONCLUSION === 'failure';
             const budgetFailed = process.env.BUDGET_CONCLUSION === 'failure';
             const keyMissing = process.env.KEY_PRESENT !== 'true';
-            const reason = budgetFailed || keyMissing ? 'infra' : 'agent_failed';
-            const hint = budgetFailed
-              ? 'Шаг проверки бюджета упал до вызова модели — счётчик не прочитан (GitHub API), запуск остановлен без расхода попытки.'
-              : keyMissing
-                ? 'Отсутствует ключ модели (ZHIPU_API_KEY) или не подготовлен инструмент.'
-                : 'Агент завершился неуспешно — подробности в логах прогона.';
+            const reason = agentRan && !keyMissing ? 'agent_failed' : 'infra';
+            const hint = agentRan
+              ? 'Агент завершился неуспешно — подробности в логах прогона.'
+              : budgetFailed
+                ? 'Шаг проверки бюджета упал до вызова модели — счётчик не прочитан (GitHub API), запуск остановлен без расхода попытки.'
+                : 'Подготовка упала до вызова модели (ключ, инструменты или ранние шаги задания) — модель не запускалась.';
             const body = `<!-- agent-outcome -->\n## Агент остановлен — нужен человек\n\nПричина: \`${reason}\`. ${hint}\n\nЛоги: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
             const number = context.issue?.number ?? context.payload.pull_request?.number;
             await github.rest.issues.createComment({
