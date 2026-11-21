@@ -237,6 +237,7 @@ export function humanDuration(minutes: number): string {
 export type ApiFailure =
   | { kind: 'booked' } // SLOT_ALREADY_BOOKED
   | { kind: 'past' } // SLOT_IN_PAST
+  | { kind: 'soon' } // SLOT_TOO_SOON — до начала меньше минимального запаса (#22)
   | { kind: 'gone' } // NOT_FOUND — тип события удалён
   | { kind: 'invalid'; fields: Record<string, string>; messages: string[] }
   | { kind: 'network' }
@@ -256,6 +257,7 @@ export function apiFailureFromError(error: unknown): ApiFailure {
 
   if (body.code === 'SLOT_ALREADY_BOOKED') return { kind: 'booked' };
   if (body.code === 'SLOT_IN_PAST') return { kind: 'past' };
+  if (body.code === 'SLOT_TOO_SOON') return { kind: 'soon' };
   if (body.code === 'NOT_FOUND') return { kind: 'gone' };
 
   if (body.code === 'VALIDATION_ERROR') {
@@ -292,6 +294,11 @@ export function bookingBanner(failure: ApiFailure): { title: string; text: strin
       return {
         title: 'Это время уже прошло',
         text: 'Слот начался, пока вы заполняли форму. Список обновлён — выберите другое окно.',
+      };
+    case 'soon':
+      return {
+        title: 'Слишком поздно записываться',
+        text: 'До начала звонка меньше 30 минут. Список обновлён — выберите окно позже.',
       };
     case 'gone':
       return {
