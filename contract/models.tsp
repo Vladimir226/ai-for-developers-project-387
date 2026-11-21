@@ -184,3 +184,15 @@ model BookingCreated extends Booking {
   @statusCode
   _: 201;
 }
+
+/**
+ * 200-ответ `GET /api/v1/bookings/{id}/calendar` — файл события iCalendar
+ * (RFC 5545) для импорта в календарь (Google, Apple, Outlook).
+ */
+model BookingCalendarFile {
+  @header contentType: "text/calendar; charset=utf-8";
+  /** Предложение имени файла с идентификатором брони (Content-Disposition). */
+  @header("content-disposition") contentDisposition: string;
+  /** Текст .ics целиком. */
+  @body content: string;
+}
