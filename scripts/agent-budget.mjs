@@ -33,7 +33,9 @@ export function isAdmittedRequest(comment) {
 }
 
 /** Прогоны воркфлоу opencode, относящиеся к PR: событие комментария и
- * совпадение с PR по заголовку прогона или ветке. run_attempt хранит
+ * совпадение с PR по заголовку прогона (для issue_comment/pull_request_
+ * review_comment display_title — заголовок issue/PR, наблюдение по истории
+ * Actions этого репозитория) или по ветке head_branch. run_attempt хранит
  * итоговое число попыток, поэтому попытка создаётся только повторами. */
 export function matchingAgentRuns(runs, pr) {
   return runs.filter(
@@ -64,43 +66,67 @@ export function computeBudget({
   return { used, limit, remaining: Math.max(0, limit - used), allowed: used < limit };
 }
 
-async function gh(path, headers, page = 1) {
-  const response = await fetch(
-    `https://api.github.com${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`,
-    {
-      headers: { Accept: 'application/vnd.github+json', ...headers },
-    },
-  );
+async function gh(path, headers) {
+  const response = await fetch(`https://api.github.com${path}`, {
+    headers: { Accept: 'application/vnd.github+json', ...headers },
+  });
   if (!response.ok) {
     throw new Error(`GitHub API ${response.status}: GET ${path}`);
   }
-  const body = await response.json();
-  return Array.isArray(body) && body.length === 100
-    ? [...body, ...(await gh(path, headers, page + 1))]
-    : body;
+  return response.json();
+}
+
+/** Эндпоинты-списки (комментарии): массив в корне ответа, страница за страницей. */
+async function ghList(path, headers) {
+  const items = [];
+  for (let page = 1; ; page += 1) {
+    const separator = path.includes('?') ? '&' : '?';
+    const chunk = await gh(`${path}${separator}per_page=100&page=${page}`, headers);
+    if (!Array.isArray(chunk)) {
+      throw new Error(`Ожидался массив из ${path}`);
+    }
+    items.push(...chunk);
+    if (chunk.length < 100) {
+      return items;
+    }
+  }
+}
+
+/** История запусков Actions: ответ — объект {total_count, workflow_runs},
+ * а не массив (замечание 1 авторевью PR #20). */
+async function ghRuns(event, repository, headers) {
+  const runs = [];
+  for (let page = 1; ; page += 1) {
+    const body = await gh(
+      `/repos/${repository}/actions/runs?event=${event}&per_page=100&page=${page}`,
+      headers,
+    );
+    const chunk = body.workflow_runs ?? [];
+    runs.push(...chunk);
+    if (chunk.length < 100) {
+      return runs;
+    }
+  }
 }
 
 /** Факты о PR из неизменяемых источников: комментарии и история Actions. */
 export async function collectPrFacts({ repository, token, prNumber }) {
   const headers = { Authorization: `Bearer ${token}` };
   const pr = await gh(`/repos/${repository}/pulls/${prNumber}`, headers);
-  const generalComments = (
-    await gh(`/repos/${repository}/issues/${prNumber}/comments`, headers)
-  ).map((comment) => ({
+  const toCommentFact = (comment) => ({
     authorAssociation: comment.author_association,
     authorType: comment.user.type,
     body: comment.body,
-  }));
-  const inlineComments = (await gh(`/repos/${repository}/pulls/${prNumber}/comments`, headers)).map(
-    (comment) => ({
-      authorAssociation: comment.author_association,
-      authorType: comment.user.type,
-      body: comment.body,
-    }),
-  );
+  });
+  const generalComments = (
+    await ghList(`/repos/${repository}/issues/${prNumber}/comments`, headers)
+  ).map(toCommentFact);
+  const inlineComments = (
+    await ghList(`/repos/${repository}/pulls/${prNumber}/comments`, headers)
+  ).map(toCommentFact);
   const runs = [
-    ...(await gh(`/repos/${repository}/actions/runs?event=issue_comment`, headers)),
-    ...(await gh(`/repos/${repository}/actions/runs?event=pull_request_review_comment`, headers)),
+    ...(await ghRuns('issue_comment', repository, headers)),
+    ...(await ghRuns('pull_request_review_comment', repository, headers)),
   ].map((run) => ({
     workflowName: run.name,
     event: run.event,

@@ -45,22 +45,28 @@ jobs:
           persist-credentials: false # git-creds не нужны: агент действует токеном App
 
       # Предел запусков на PR (#19): проверка ДО вызова модели. Для issue
-      # (не PR) шаг пропускается — бюджет действует на pull request.
+      # (не PR) шаг пропускается — бюджет действует на pull request. Payload
+      # pull_request_review_comment не содержит issue — номер берётся из
+      # pull_request (замечание 2 авторевью PR #20).
       - name: Проверить бюджет агента на PR
         id: budget
-        if: github.event.issue.pull_request
+        if: |
+          github.event.issue.pull_request ||
+          github.event_name == 'pull_request_review_comment'
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/agent-budget.mjs "${{ github.event.issue.number }}"
+        run: node scripts/agent-budget.mjs "${{ github.event.issue.number || github.event.pull_request.number }}"
 
       # Отдельный шаг без модели публикует отказ: причина, последний SHA и
-      # ссылка на логи. Токен агента не может переписать счётчик.
+      # ссылка на логи. Токен агента не может переписать счётчик. exit 1 —
+      # прогон красный; шаг отчёта о сбое это состояние не перехватывает
+      # (замечание 4 авторевью PR #20): limit_exhausted ≠ agent_failed.
       - name: Сообщить об исчерпании бюджета
         if: steps.budget.outputs.allowed == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
           USED: ${{ steps.budget.outputs.used }}
           LIMIT: ${{ steps.budget.outputs.limit }}
           HEAD_SHA: ${{ steps.budget.outputs.head_sha }}
@@ -88,22 +94,24 @@ jobs:
 
       # Итог остановки агента публикует отдельный шаг без модели (#19):
       # тайм-аут задания → timeout; отсутствие ключа/сбой подготовки → infra;
-      # прочий неуспех агента → agent_failed. Человек разбирает по логам.
+      # прочий неуспех агента → agent_failed. Отказ бюджета (allowed=false)
+      # не считается сбоем агента (замечание 4 авторевью PR #20); номер
+      # субъекта устойчив к обоим событиям комментариев.
       - name: Отчёт — тайм-аут вызова
         if: cancelled()
         uses: actions/github-script@v8
         with:
           script: |
             const body = `<!-- agent-outcome -->\n## Агент остановлен — нужен человек\n\nПричина: \`timeout\` — задание превысило лимит времени.\n\nЛоги: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-            const { issue } = context;
+            const number = context.issue?.number ?? context.payload.pull_request?.number;
             await github.rest.issues.createComment({
               ...context.repo,
-              issue_number: issue.number,
+              issue_number: number,
               body,
             });
 
       - name: Отчёт — сбой вызова
-        if: failure()
+        if: failure() && steps.budget.outputs.allowed != 'false'
         uses: actions/github-script@v8
         env:
           KEY_PRESENT: ${{ secrets.ZHIPU_API_KEY != '' }}
@@ -114,9 +122,9 @@ jobs:
               ? 'Отсутствует ключ модели (ZHIPU_API_KEY) или не подготовлен инструмент.'
               : 'Агент завершился неуспешно — подробности в логах прогона.';
             const body = `<!-- agent-outcome -->\n## Агент остановлен — нужен человек\n\nПричина: \`${reason}\`. ${hint}\n\nЛоги: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-            const { issue } = context;
+            const number = context.issue?.number ?? context.payload.pull_request?.number;
             await github.rest.issues.createComment({
               ...context.repo,
-              issue_number: issue.number,
+              issue_number: number,
               body,
             });
