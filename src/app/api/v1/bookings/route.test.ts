@@ -7,8 +7,10 @@ import {
   getBookings,
   pastIso,
   postBooking,
+  putWorkingHours,
   seedEventTypeViaApi,
   silenceRequestLogs,
+  weekHours,
 } from '@/lib/testing/api';
 import { clearTables, setupTestDatabase } from '@/lib/testing/test-db';
 
@@ -304,6 +306,102 @@ describe('POST /api/v1/bookings — серверный инвариант сло
 
     expect((await bookAt(type60.id, at10)).status).toBe(201);
     expect((await bookAt(type30.id, at11)).status).toBe(201);
+  });
+});
+
+describe('POST /api/v1/bookings — минимальный запас до звонка (#22)', () => {
+  beforeEach(async () => {
+    silenceRequestLogs();
+    await clearTables();
+  });
+
+  // Реальное «сейчас» не контролируем, поэтому старты выбираются
+  // динамически (notes-приём #22): часы 00:00–24:00 на все дни и
+  // длительность 30 минут дают сетку стартов ровно каждые 30 минут UTC —
+  // единственный старт в получасовом окне после now «слишком близкий»,
+  // первый старт после границы now + 30 минут — допустимый.
+  const STEP_MS = 30 * 60 * 1000;
+
+  /** Первый старт сетки не раньше чем через секунду: старт строго после now с запасом на вызов route (иначе ответ был бы SLOT_IN_PAST). */
+  function nextGridStart(): { now: number; start: Date } {
+    const now = Date.now();
+    return { now, start: new Date(Math.ceil((now + 1000) / STEP_MS) * STEP_MS) };
+  }
+
+  it('близкий слот (старт внутри получаса после now) → 409 SLOT_TOO_SOON; повтор — тот же ответ, бронь не создаётся', async () => {
+    const type = await seedEventTypeViaApi({ durationMinutes: 30 });
+    const put = await putWorkingHours({
+      days: weekHours({ startMinutes: 0, endMinutes: 1440 }, []),
+    });
+    expect(put.status).toBe(200);
+
+    const { now, start } = nextGridStart();
+    // Граничный момент: старт попал в последнюю секунду перед границей
+    // (now почти ровно на сетке) — близкого слота в природе нет, пропускаем.
+    if (start.getTime() >= now + STEP_MS - 1000) return;
+
+    const response = await postBooking({
+      eventTypeId: type.id,
+      startsAt: start.toISOString(),
+      bookerName: 'Мария',
+      bookerContact: 'telegram: @maria',
+    });
+
+    expect(response.status).toBe(409);
+    const body = schemas.ErrorEnvelope.parse(await response.json());
+    expect(body.error.code).toBe('SLOT_TOO_SOON');
+    expect(body.error.message).toEqual(expect.stringContaining('30 минут'));
+
+    // повторная попытка — тот же ответ, слот не занимается
+    const retry = await postBooking({
+      eventTypeId: type.id,
+      startsAt: start.toISOString(),
+      bookerName: 'Пётр',
+      bookerContact: 'phone:+79160000000',
+    });
+    expect(retry.status).toBe(409);
+    expect(schemas.ErrorEnvelope.parse(await retry.json()).error.code).toBe('SLOT_TOO_SOON');
+
+    const bookings = schemas.BookingList.parse(await (await getBookings()).json());
+    expect(bookings.bookings).toEqual([]);
+  });
+
+  it('ближайший допустимый старт (не раньше now + 30 минут) → 201', async () => {
+    const type = await seedEventTypeViaApi({ durationMinutes: 30 });
+    const put = await putWorkingHours({
+      days: weekHours({ startMinutes: 0, endMinutes: 1440 }, []),
+    });
+    expect(put.status).toBe(200);
+
+    // первый старт сетки за границей запаса с запасом секунды на вызов
+    const now = Date.now();
+    const firstAllowed = new Date(Math.ceil((now + STEP_MS + 1000) / STEP_MS) * STEP_MS);
+
+    const response = await postBooking({
+      eventTypeId: type.id,
+      startsAt: firstAllowed.toISOString(),
+      bookerName: 'Мария',
+      bookerContact: 'telegram: @maria',
+    });
+
+    expect(response.status).toBe(201);
+    const body = schemas.BookingCreated.parse(await response.json());
+    expect(body.startsAt).toBe(firstAllowed.toISOString());
+  });
+
+  it('прошлое важнее «слишком рано»: прошедший старт → 409 SLOT_IN_PAST, не SLOT_TOO_SOON', async () => {
+    const type = await seedEventTypeViaApi({ durationMinutes: 30 });
+
+    // прошлый старт подпадает под оба правила, но приоритет проверок выше
+    const response = await postBooking({
+      eventTypeId: type.id,
+      startsAt: pastIso(1),
+      bookerName: 'Мария',
+      bookerContact: 'telegram: @maria',
+    });
+
+    expect(response.status).toBe(409);
+    expect(schemas.ErrorEnvelope.parse(await response.json()).error.code).toBe('SLOT_IN_PAST');
   });
 });
 

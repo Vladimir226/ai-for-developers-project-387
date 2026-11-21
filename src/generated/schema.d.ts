@@ -21,9 +21,12 @@ export interface paths {
         /**
          * Забронировать слот
          * @description Забронировать слот типа события: интервал — полуинтервал от `startsAt`
-         *     до `startsAt` + длительность типа. 404 — типа нет; 409 — `SLOT_IN_PAST`
-         *     (слот прошёл) или `SLOT_ALREADY_BOOKED` (наложение с любой активной
-         *     бронью, включая другие типы — D12; примыкание допустимо).
+         *     до `startsAt` + длительность типа. Старт не раньше чем через минимальный
+         *     запас до звонка — 30 минут от текущего момента (#22), граница допустима.
+         *     404 — типа нет; 409 — `SLOT_IN_PAST` (слот прошёл; проверяется раньше),
+         *     `SLOT_TOO_SOON` (до старта меньше минимального запаса) или
+         *     `SLOT_ALREADY_BOOKED` (наложение с любой активной бронью, включая другие
+         *     типы — D12; примыкание допустимо).
          */
         post: operations["createBooking"];
         delete?: never;
@@ -134,8 +137,10 @@ export interface paths {
          * Свободные слоты типа
          * @description Вычисляемые свободные слоты типа (ADR-0011): старты внутри рабочих часов с
          *     шагом, равным длительности типа (D2), слот целиком помещается в день; окно
-         *     записи — 14 календарных дней с сегодня по `APP_TZ` (D6). `from`/`to`
-         *     опциональны. 404 — типа нет.
+         *     записи — 14 календарных дней с сегодня по `APP_TZ` (D6). Выдаётся только
+         *     старт не ранее чем через минимальный запас до звонка — 30 минут от
+         *     текущего момента (#22): близкие и уже начавшиеся слоты не возвращаются.
+         *     `from`/`to` опциональны. 404 — типа нет.
          */
         get: operations["listEventTypeSlots"];
         put?: never;
@@ -261,7 +266,7 @@ export interface components {
          * @description Стабильные машинные коды ошибок API (ADR-005): клиент интерпретирует ошибки только по ним.
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_ERROR" | "NOT_FOUND" | "SLOT_ALREADY_BOOKED" | "SLOT_IN_PAST";
+        ErrorCode: "VALIDATION_ERROR" | "NOT_FOUND" | "SLOT_ALREADY_BOOKED" | "SLOT_IN_PAST" | "SLOT_TOO_SOON";
         /** @description Конверт ошибок API (ADR-005): `{"error": {"code", "message", "details"?}}`. */
         ErrorEnvelope: {
             error: components["schemas"]["ErrorBody"];
@@ -422,7 +427,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description 409 — конфликт состояния: `SLOT_ALREADY_BOOKED`, `SLOT_IN_PAST`. */
+            /** @description 409 — конфликт состояния: `SLOT_ALREADY_BOOKED`, `SLOT_IN_PAST`, `SLOT_TOO_SOON`. */
             409: {
                 headers: {
                     [name: string]: unknown;
