@@ -1,5 +1,6 @@
 import { findBookingById } from '@/domain/bookings/bookings';
 import { buildBookingIcs } from '@/domain/bookings/ics';
+import { getIcsUidDomain } from '@/lib/bookings/ics-uid-domain';
 import { jsonError } from '@/lib/http/json-error';
 import { withRequestLogging } from '@/lib/http/with-request-logging';
 
@@ -19,7 +20,7 @@ export const GET = withRequestLogging<RouteContext>(async (_request, { params })
     return jsonError('NOT_FOUND', 404, 'Бронь не найдена');
   }
 
-  return new Response(buildBookingIcs(booking), {
+  return new Response(buildBookingIcs(booking, getIcsUidDomain()), {
     status: 200,
     headers: {
       'content-type': 'text/calendar; charset=utf-8',

@@ -7,8 +7,8 @@ import type { BookingRecord } from './bookings';
 /** Идентификатор продукта-генератора (RFC 5545 §3.7.3). */
 const PRODID = '-//Book-a-Call//RU';
 
-/** Домен сервиса в UID события — стабильный глобальный идентификатор (US-10). */
-const UID_DOMAIN = 'book-a-call.local';
+/** Домен сервиса по умолчанию в UID события; реальный домен подставляет вызов. */
+export const DEFAULT_UID_DOMAIN = 'book-a-call.local';
 
 /** Дата в базовом UTC-формате RFC 5545: YYYYMMDDTHHMMSSZ (ADR-0009). */
 export function icsUtc(date: Date): string {
@@ -68,7 +68,7 @@ export function foldLine(line: string): string {
   return chunks.join('\r\n ');
 }
 
-export function buildBookingIcs(booking: BookingRecord): string {
+export function buildBookingIcs(booking: BookingRecord, uidDomain = DEFAULT_UID_DOMAIN): string {
   const summary = `${booking.eventType.title} — ${booking.bookerName}`;
   const description =
     booking.comment === null
@@ -83,7 +83,7 @@ export function buildBookingIcs(booking: BookingRecord): string {
     `PRODID:${PRODID}`,
     'CALSCALE:GREGORIAN',
     'BEGIN:VEVENT',
-    `UID:${booking.id}@${UID_DOMAIN}`,
+    `UID:${booking.id}@${uidDomain}`,
     `DTSTAMP:${icsUtc(booking.createdAt)}`,
     `DTSTART:${icsUtc(booking.startsAt)}`,
     `DTEND:${icsUtc(booking.endsAt)}`,

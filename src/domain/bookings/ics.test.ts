@@ -88,6 +88,15 @@ describe('buildBookingIcs', () => {
     expect(property(second, 'UID')).toBe(uid); // US-10: повторное скачивание не плодит дубликаты
   });
 
+  it('UID: домен — параметр (домен сервиса из окружения), дефолт прежний', () => {
+    const ics = buildBookingIcs(makeBooking(), 'calls.example.com');
+
+    expect(property(ics, 'UID')).toBe('11111111-2222-4333-8444-555555555555@calls.example.com');
+    expect(property(buildBookingIcs(makeBooking()), 'UID')).toBe(
+      '11111111-2222-4333-8444-555555555555@book-a-call.local',
+    );
+  });
+
   it('DESCRIPTION с заметкой: контакт, затем заметка через перевод строки', () => {
     const ics = buildBookingIcs(makeBooking({ comment: 'Позвонить в Telegram' }));
 
