@@ -1,0 +1,597 @@
+openapi: 3.0.0
+info:
+  title: Book-a-Call API
+  version: 2.0.0
+  description: |-
+    REST API «Запись на звонок».
+
+    ADR-010: TypeSpec — единственный источник истины API. OpenAPI, типы SDK и
+    Zod-схемы генерируются (`npm run contract:gen`) в `src/generated/` и
+    коммитятся. Сервер реализуется по контракту вручную (Route Handlers) и
+    проверяется integration-тестами, парсящими ответы сгенерированными схемами.
+
+    Доменная модель — ADR-0011 (карта #28, D1–D12): хранимые сущности — типы
+    событий, рабочие часы и брони; слоты вычисляются на лету и не хранятся.
+    Ручная публикация интервалов (`POST/DELETE /api/v1/slots`, `view=free|all`)
+    ушла вместе с ADR-008.
+
+    Время — ISO-8601 UTC (ADR-009). AuthN нет (ADR-003). Версионирование —
+    префикс /api/v1; `version` в
+tags: []
+paths:
+  /api/v1/bookings:
+    get:
+      operationId: listBookings
+      summary: Список броней
+      description: |-
+        Список броней владельца. `upcoming` — резерв фильтра «предстоящие»
+        (реализация — #36); без параметра возвращаются все брони.
+      parameters:
+        - name: upcoming
+          in: query
+          required: false
+          description: 'Только предстоящие брони (резерв, #36).'
+          schema:
+            type: boolean
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingList'
+    post:
+      operationId: createBooking
+      summary: Забронировать слот
+      description: |-
+        Забронировать слот типа события: интервал — полуинтервал от `startsAt`
+        до `startsAt` + длительность типа. 404 — типа нет; 409 — `SLOT_IN_PAST`
+        (слот прошёл) или `SLOT_ALREADY_BOOKED` (наложение с любой активной
+        бронью, включая другие типы — D12; примыкание допустимо).
+      parameters: []
+      responses:
+        '201':
+          description: 201-ответ `POST /api/v1/bookings` — созданная бронь.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingCreated'
+        '404':
+          description: 404 — ресурс не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: '409 — конфликт состояния: `SLOT_ALREADY_BOOKED`, `SLOT_IN_PAST`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 422 — ошибка валидации полей.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBookingRequest'
+  /api/v1/bookings/{id}:
+    delete:
+      operationId: deleteBooking
+      summary: Отменить бронь
+      description: Отменить бронь — время снова становится свободным для всех типов.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: There is no content to send for this request, but the headers may be useful.
+        '404':
+          description: 404 — ресурс не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/event-types:
+    get:
+      operationId: listEventTypes
+      summary: Список типов событий
+      description: 'Список типов событий: страница видов брони для гостя и панель владельца.'
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventTypeList'
+    post:
+      operationId: createEventType
+      summary: Создать тип события
+      description: 'Создать тип события (владелец): название 1..100, описание ≤500, длительность 15..180 минут.'
+      parameters: []
+      responses:
+        '201':
+          description: 201-ответ `POST /api/v1/event-types` — созданный тип.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventTypeCreated'
+        '422':
+          description: 422 — ошибка валидации полей.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEventTypeRequest'
+  /api/v1/event-types/{id}:
+    put:
+      operationId: updateEventType
+      summary: Изменить тип события
+      description: 'Изменить тип события (владелец): полная замена полей. 404 — типа нет.'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventType'
+        '404':
+          description: 404 — ресурс не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 422 — ошибка валидации полей.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEventTypeRequest'
+    delete:
+      operationId: deleteEventType
+      summary: Удалить тип события
+      description: |-
+        Удалить тип события (владелец) — каскадно вместе с его бронями (D4):
+        время освобождается для остальных типов.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: There is no content to send for this request, but the headers may be useful.
+        '404':
+          description: 404 — ресурс не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/event-types/{id}/slots:
+    get:
+      operationId: listEventTypeSlots
+      summary: Свободные слоты типа
+      description: |-
+        Вычисляемые свободные слоты типа (ADR-0011): старты внутри рабочих часов с
+        шагом, равным длительности типа (D2), слот целиком помещается в день; окно
+        записи — 14 календарных дней с сегодня по `APP_TZ` (D6). `from`/`to`
+        опциональны. 404 — типа нет.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          description: Начало периода (ISO-8601 UTC); по умолчанию — сейчас.
+          schema:
+            type: string
+            format: date-time
+          explode: false
+        - name: to
+          in: query
+          required: false
+          description: Конец периода (ISO-8601 UTC); по умолчанию — сейчас + 14 дней (окно записи, D6).
+          schema:
+            type: string
+            format: date-time
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlotList'
+        '404':
+          description: 404 — ресурс не найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 422 — ошибка валидации полей.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/working-hours:
+    get:
+      operationId: getWorkingHours
+      summary: Рабочие часы недели
+      description: 'Текущие рабочие часы недели (D3): по одной записи на каждый день 0..6.'
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkingHours'
+    put:
+      operationId: putWorkingHours
+      summary: Задать рабочие часы
+      description: |-
+        Задать рабочие часы недели (владелец): ровно 7 дней, у рабочего дня
+        `startMinutes < endMinutes`, у выходного минуты не нужны. Перерывы внутри
+        дня не поддерживаются (D3).
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkingHours'
+        '422':
+          description: 422 — ошибка валидации полей.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkingHours'
+components:
+  schemas:
+    Booking:
+      type: object
+      required:
+        - id
+        - eventType
+        - startsAt
+        - endsAt
+        - bookerName
+        - bookerContact
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор брони (UUID).
+        eventType:
+          allOf:
+            - $ref: '#/components/schemas/BookingEventType'
+          description: Забронированный тип события.
+        startsAt:
+          type: string
+          format: date-time
+          description: Начало встречи, ISO-8601 UTC.
+        endsAt:
+          type: string
+          format: date-time
+          description: Конец встречи — `startsAt` + длительность типа, ISO-8601 UTC.
+        bookerName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Имя бронирующего.
+        bookerContact:
+          type: string
+          minLength: 5
+          maxLength: 200
+          description: Контакт для связи (телефон/мессенджер/email).
+        comment:
+          type: string
+          maxLength: 500
+          description: Комментарий к брони (необязателен).
+        createdAt:
+          type: string
+          format: date-time
+          description: Момент создания брони, ISO-8601 UTC.
+      description: 'Бронь: встреча гостя на выбранный слот типа события.'
+    BookingCreated:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/Booking'
+      description: 201-ответ `POST /api/v1/bookings` — созданная бронь.
+    BookingEventType:
+      type: object
+      required:
+        - id
+        - title
+        - durationMinutes
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор типа (UUID).
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Название вида брони.
+        durationMinutes:
+          type: integer
+          format: int32
+          minimum: 15
+          maximum: 180
+          description: Длительность в целых минутах.
+      description: 'Тип события, вложенный в бронь: длительность фиксируется на момент создания (ADR-0011).'
+    BookingList:
+      type: object
+      required:
+        - bookings
+      properties:
+        bookings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Booking'
+      description: Тело ответа `GET /api/v1/bookings`.
+    CreateBookingRequest:
+      type: object
+      required:
+        - eventTypeId
+        - startsAt
+        - bookerName
+        - bookerContact
+      properties:
+        eventTypeId:
+          type: string
+          format: uuid
+          description: Идентификатор типа события.
+        startsAt:
+          type: string
+          format: date-time
+          description: Начало слота, ISO-8601 UTC; слот должен быть будущим и свободным.
+        bookerName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Имя бронирующего.
+        bookerContact:
+          type: string
+          minLength: 5
+          maxLength: 200
+          description: Контакт для связи.
+        comment:
+          type: string
+          maxLength: 500
+          description: Комментарий (необязателен).
+      description: Тело запроса `POST /api/v1/bookings`.
+    CreateEventTypeRequest:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/EventTypeDraft'
+      description: Тело запроса `POST /api/v1/event-types`.
+    ErrorBody:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: Человекочитаемое сообщение (ru).
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationErrorItem'
+          description: Дополнительные машиночитательные данные; для `VALIDATION_ERROR` — список невалидных полей.
+      description: Тело ошибки (ADR-005).
+    ErrorCode:
+      type: string
+      enum:
+        - VALIDATION_ERROR
+        - NOT_FOUND
+        - SLOT_ALREADY_BOOKED
+        - SLOT_IN_PAST
+      description: 'Стабильные машинные коды ошибок API (ADR-005): клиент интерпретирует ошибки только по ним.'
+    ErrorEnvelope:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      description: 'Конверт ошибок API (ADR-005): `{"error": {"code", "message", "details"?}}`.'
+    EventType:
+      type: object
+      required:
+        - id
+        - title
+        - durationMinutes
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Идентификатор типа (UUID).
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Название вида брони.
+        description:
+          type: string
+          maxLength: 500
+          description: Описание для гостя (необязательное).
+        durationMinutes:
+          type: integer
+          format: int32
+          minimum: 15
+          maximum: 180
+          description: Длительность в целых минутах.
+      description: 'Тип события (D1): вид брони с фиксированной длительностью; длительность слота и шаг стартов равны ей (D2).'
+    EventTypeCreated:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/EventType'
+      description: 201-ответ `POST /api/v1/event-types` — созданный тип.
+    EventTypeDraft:
+      type: object
+      required:
+        - title
+        - durationMinutes
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Название вида брони.
+        description:
+          type: string
+          maxLength: 500
+          description: Описание для гостя (необязательное).
+        durationMinutes:
+          type: integer
+          format: int32
+          minimum: 15
+          maximum: 180
+          description: Длительность в целых минутах.
+      description: Редактируемые поля типа события — общие для создания и замены.
+    EventTypeList:
+      type: object
+      required:
+        - eventTypes
+      properties:
+        eventTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventType'
+      description: Тело ответа `GET /api/v1/event-types`.
+    Slot:
+      type: object
+      required:
+        - startsAt
+        - endsAt
+      properties:
+        startsAt:
+          type: string
+          format: date-time
+          description: Начало слота, ISO-8601 UTC.
+        endsAt:
+          type: string
+          format: date-time
+          description: Конец слота — `startsAt` + длительность типа, ISO-8601 UTC.
+      description: |-
+        Вычисляемый свободный слот (ADR-0011): в БД не хранится и идентификатора
+        не имеет — генерируется внутри рабочих часов с шагом, равным длительности
+        типа (D2), целиком помещаясь в день; гостю предлагаются только слоты без
+        наложения на активные брони (D12).
+    SlotList:
+      type: object
+      required:
+        - slots
+      properties:
+        slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/Slot'
+      description: Тело ответа `GET /api/v1/event-types/{id}/slots`.
+    UpdateEventTypeRequest:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/EventTypeDraft'
+      description: Тело запроса `PUT /api/v1/event-types/{id}` — полная замена полей.
+    ValidationErrorItem:
+      type: object
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+          description: Имя невалидного поля (camelCase, ADR-006).
+        message:
+          type: string
+          description: Человекочитаемое сообщение (ru).
+      description: Элемент `error.details` для `VALIDATION_ERROR`.
+    WorkingHours:
+      type: object
+      required:
+        - days
+      properties:
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkingHoursDay'
+      description: 'Рабочие часы недели: ровно по одной записи на каждый день `0..6`.'
+    WorkingHoursDay:
+      type: object
+      required:
+        - weekday
+        - isDayOff
+      properties:
+        weekday:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 6
+          description: 'День недели: 0 — воскресенье … 6 — суббота (как `Date#getDay`).'
+        isDayOff:
+          type: boolean
+          description: 'Выходной: слоты в этот день не генерируются.'
+        startMinutes:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 1440
+          description: Начало дня в минутах от полуночи; обязательно, когда `isDayOff = false`.
+        endMinutes:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 1440
+          description: Конец дня в минутах от полуночи (эксклюзивно); обязателен, когда `isDayOff = false`.
+      description: |-
+        Рабочие часы одного дня недели (D3): интервал `[startMinutes; endMinutes)`
+        от полуночи или выходной. Перерывов внутри дня нет.
+servers:
+  - url: /
+    description: UI и API живут в одном приложении — self-fetch (ADR-004)
+    variables: {}
