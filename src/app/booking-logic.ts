@@ -1,3 +1,4 @@
+import { MIN_LEAD_TIME_MS } from '@/domain/availability/lead-time';
 import { formatTimeRange } from '@/lib/time/display';
 
 // Чистая логика публичной страницы бронирования (ADR-0004: UI тонкий, правил
@@ -298,7 +299,9 @@ export function bookingBanner(failure: ApiFailure): { title: string; text: strin
     case 'soon':
       return {
         title: 'Слишком поздно записываться',
-        text: 'До начала звонка меньше 30 минут. Список обновлён — выберите окно позже.',
+        // минуты — из константы домена (#22, ADR-0014): текст баннера не
+        // рассинхронизируется с правилом (для 30 форма «минут» корректна)
+        text: `До начала звонка меньше ${MIN_LEAD_TIME_MS / 60_000} минут. Список обновлён — выберите окно позже.`,
       };
     case 'gone':
       return {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MIN_LEAD_TIME_MS } from '@/domain/availability/lead-time';
 import { parseSlotQuery } from '@/lib/validation/slot';
 import {
   apiFailureFromError,
@@ -257,6 +258,15 @@ describe('bookingBanner', () => {
       title: 'Слишком поздно записываться',
       text: 'До начала звонка меньше 30 минут. Список обновлён — выберите окно позже.',
     });
+  });
+
+  it('пиннинг: минуты в тексте SLOT_TOO_SOON — из MIN_LEAD_TIME_MS (единый источник величины)', () => {
+    // связывает текст баннера с константой домена: смена запаса меняет и
+    // текст, а не только правило выдачи/брони
+    const minutes = MIN_LEAD_TIME_MS / 60_000;
+    expect(bookingBanner({ kind: 'soon' })?.text).toBe(
+      `До начала звонка меньше ${minutes} минут. Список обновлён — выберите окно позже.`,
+    );
   });
 
   it('сетевые и неизвестные сбои — свои заголовки', () => {

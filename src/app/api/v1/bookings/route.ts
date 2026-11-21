@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createBooking, listBookings, serializeBooking } from '@/domain/bookings/bookings';
+import { MIN_LEAD_TIME_MS } from '@/domain/availability/lead-time';
 import { parseBodyOr } from '@/lib/http/json-body';
 import { jsonError } from '@/lib/http/json-error';
 import { withRequestLogging } from '@/lib/http/with-request-logging';
@@ -41,12 +42,14 @@ export const POST = withRequestLogging(async (request) => {
       return jsonError('SLOT_IN_PAST', 409, 'Слот уже начался или прошёл');
     }
     if (result.reason === 'slot-too-soon') {
-      // Минимальный запас (#22): слот будущий, но записываться поздно —
-      // у владельца не остаётся времени на подготовку к звонку
+      // Минимальный запас (#22, ADR-0014): слот будущий, но записываться
+      // поздно — у владельца не остаётся времени на подготовку к звонку.
+      // Величина — из константы домена, текст не рассинхронизируется с
+      // правилом (для 30 форма «минут» корректна).
       return jsonError(
         'SLOT_TOO_SOON',
         409,
-        'До начала звонка меньше 30 минут — выберите слот позже',
+        `До начала звонка меньше ${MIN_LEAD_TIME_MS / 60_000} минут — выберите слот позже`,
       );
     }
     if (result.reason === 'invalid-slot-start') {
