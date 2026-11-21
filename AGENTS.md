@@ -17,7 +17,7 @@ npm run lint     # только линтеры: eslint + tsc --noEmit + redocly 
 - `src/domain/` — доменная логика без HTTP и БД; `src/lib/` — инфраструктура: Prisma, валидация, SDK-клиент, логирование
 - `contract/` — TypeSpec-контракт API, источник истины; `npm run contract:gen` генерирует `src/generated/` (коммитится, руками не править — расхождение ловит drift-check в CI)
 - `prisma/` — схема и миграции (SQLite + WAL)
-- CI: наш `.github/workflows/check.yml` вызывает `make check`; `hexlet-check.yml` — автогенерированный Хекслетом, не трогать; `opencode.yml` — OpenCode-агент для команд `/oc` в issues и PR (модель и доступ — в README, раздел «Агент в GitHub»)
+- CI: наш `.github/workflows/check.yml` вызывает `make check`; `hexlet-check.yml` — автогенерированный Хекслетом, не трогать; `opencode.yml` — OpenCode-агент для команд `/oc` в issues и PR (модель и доступ — в README, раздел «Агент в GitHub»); `triage.yml` — автотриаж новых обращений по скиллу triage (подробности — в README и `docs/agents/triage-labels.md`)
 
 Правила, которые из кода не читаются: сервер — источник истины, UI ходит через SDK и `router.refresh()` (ADR-004); время храним и передаём в UTC, отображаем в `APP_TZ` (ADR-009); один Docker-образ, БД — файл в volume `/data` (ADR-007).
 
