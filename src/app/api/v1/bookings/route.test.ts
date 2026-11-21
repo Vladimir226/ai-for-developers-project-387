@@ -329,7 +329,9 @@ describe('POST /api/v1/bookings — минимальный запас до зв�
     return { now, start: new Date(Math.ceil((now + 1000) / STEP_MS) * STEP_MS) };
   }
 
-  it('близкий слот (старт внутри получаса после now) → 409 SLOT_TOO_SOON; повтор — тот же ответ, бронь не создаётся', async () => {
+  it('близкий слот (старт внутри получаса после now) → 409 SLOT_TOO_SOON; повтор — тот же ответ, бронь не создаётся', async ({
+    skip,
+  }) => {
     const type = await seedEventTypeViaApi({ durationMinutes: 30 });
     const put = await putWorkingHours({
       days: weekHours({ startMinutes: 0, endMinutes: 1440 }, []),
@@ -338,8 +340,13 @@ describe('POST /api/v1/bookings — минимальный запас до зв�
 
     const { now, start } = nextGridStart();
     // Граничный момент: старт попал в последнюю секунду перед границей
-    // (now почти ровно на сетке) — близкого слота в природе нет, пропускаем.
-    if (start.getTime() >= now + STEP_MS - 1000) return;
+    // (now почти ровно на сетке) — близкого слота в природе нет. Пропуск
+    // видимый, с причиной: тихий return прошёл бы тест «зелёно» без
+    // единой проверки (вакуумный прогон вместо покрытия).
+    if (start.getTime() >= now + STEP_MS - 1000) {
+      skip('старт сетки в последнюю секунду перед границей запаса — близкого слота нет');
+      return;
+    }
 
     const response = await postBooking({
       eventTypeId: type.id,
