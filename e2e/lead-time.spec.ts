@@ -1,9 +1,10 @@
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import {
   cleanupSeededTypesAfterEach,
   firstDayWithSlots,
   openDay,
   seedAndTrack,
+  slotButton,
   slotTimeLabel,
   slotsSection,
   type SlotJson,
@@ -67,8 +68,7 @@ async function putWorkingHours(
   expect(response.status(), 'PUT рабочих часов').toBe(200);
 }
 
-/**
- * Неделя 00:00–24:00 без выходных — «сейчас ± пара часов» покрыто в любой
+/** Неделя 00:00–24:00 без выходных — «сейчас ± пара часов» покрыто в любой
  * день. 1440 минут (24:00), как в API-тестах запаса: сетка стартов
  * равномерна — каждые 30 минут до конца суток, последний старт 23:30
  * укладывается целиком (23:30 + 30 = 24:00); при 23:59 он бы выпадал.
@@ -80,6 +80,26 @@ function aroundTheClockWeek(): WorkingHoursDayJson[] {
     startMinutes: 0,
     endMinutes: 24 * 60,
   }));
+}
+
+/**
+ * Открывает страницу записи «Экспресс-созвона» и возвращает слоты из
+ * ответа GET …/slots — именно на нём строит календарь страница.
+ */
+async function offeredSlots(page: Page, typeId: string): Promise<SlotJson[]> {
+  const slotsLoaded = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'GET' &&
+      response.url().includes(`/api/v1/event-types/${typeId}/slots`),
+  );
+  await page.goto('/');
+  await page
+    .locator('section[aria-label="Виды брони"]')
+    .getByRole('button', { name: /Экспресс-созвон/ })
+    .click();
+  const response = await slotsLoaded;
+  expect(response.status(), 'GET слотов для календаря страницы').toBe(200);
+  return ((await response.json()) as { slots: SlotJson[] }).slots;
 }
 
 // Уборка типов — общий хелпер (каскад D4 убирает и брони); часы недели
@@ -110,19 +130,7 @@ test.describe('минимальный запас до звонка: список
     const before = Date.now();
 
     // Страница строит календарь из ответа GET …/slots — ловим именно его
-    const slotsLoaded = page.waitForResponse(
-      (response) =>
-        response.request().method() === 'GET' &&
-        response.url().includes(`/api/v1/event-types/${type.id}/slots`),
-    );
-    await page.goto('/');
-    await page
-      .locator('section[aria-label="Виды брони"]')
-      .getByRole('button', { name: /Экспресс-созвон/ })
-      .click();
-    const response = await slotsLoaded;
-    expect(response.status(), 'GET слотов для календаря страницы').toBe(200);
-    const slots = ((await response.json()) as { slots: SlotJson[] }).slots;
+    const slots = await offeredSlots(page, type.id);
 
     // Список непуст: круглосуточная неделя даёт окна всегда (близкие слоты
     // есть — проверка не проходит вакуумно)
@@ -139,7 +147,7 @@ test.describe('минимальный запас до звонка: список
     }
 
     // Проверка «кусает»: ближайшее окно — за границей, но рядом с ней
-    // (сетка даёт старт максимум через час после границы), а не в конце
+    // (сетка даёт старт максимум через полчаса после границы), а не в конце
     // 14-дневного окна
     expect(
       new Date(slots[0]!.startsAt).getTime(),
@@ -153,5 +161,44 @@ test.describe('минимальный запас до звонка: список
     expect(day, 'в ответе есть день с окнами').not.toBeNull();
     await openDay(page, day!.dateKey);
     await expect(slotsSection(page).getByRole('button')).toHaveText(day!.slots.map(slotTimeLabel));
+
+    // Основной сценарий спецификации: первый предложенный слот не просто
+    // показывается — он бронируется. Гость кликает окно и проходит форму
+    // (как в booking-flow.spec.ts) — и видит экран подтверждения.
+    //
+    // Анти-флак: сервер проверит запас своим «сейчас» на момент POST, а
+    // старт обязан оставаться за границей и к этому моменту. Редкий
+    // ровно-граничный случай (граница совпала со стартом сетки с точностью
+    // до секунд) — ждём момент, когда граница now + 30 минут перевалит
+    // через старт, и перечитываем список: первым предложенным станет
+    // следующий узел сетки — на 30 минут дальше границы.
+    const SUBMIT_SAFETY_MS = 10_000; // клик окна + заполнение формы + POST
+    let targetDay = day!;
+    let target = targetDay.slots[0]!;
+    if (new Date(target.startsAt).getTime() < Date.now() + LEAD_MS + SUBMIT_SAFETY_MS) {
+      const crossingAt = new Date(target.startsAt).getTime() - LEAD_MS;
+      if (crossingAt > Date.now()) {
+        await page.waitForTimeout(crossingAt - Date.now() + 1_000);
+      }
+      const fresh = await offeredSlots(page, type.id);
+      const freshDay = firstDayWithSlots(fresh);
+      expect(freshDay, 'после перечитывания есть день с окнами').not.toBeNull();
+      targetDay = freshDay!;
+      target = targetDay.slots[0]!;
+    }
+    expect(
+      new Date(target.startsAt).getTime(),
+      'первый предложенный слот — за границей запаса с запасом на отправку формы',
+    ).toBeGreaterThanOrEqual(Date.now() + LEAD_MS);
+
+    await openDay(page, targetDay.dateKey);
+    await slotButton(page, target).click();
+    await page.getByLabel('Ваше имя').fill('Мария');
+    await page.getByLabel('Телефон или email').fill('+7 900 000-00-00');
+    await page.getByRole('button', { name: 'Забронировать звонок' }).click();
+
+    const confirmed = page.locator('section[aria-label="Бронь подтверждена"]');
+    await expect(confirmed).toBeVisible();
+    await expect(confirmed).toContainText(slotTimeLabel(target));
   });
 });
