@@ -323,10 +323,18 @@ describe('POST /api/v1/bookings — минимальный запас до зв�
   // первый старт после границы now + 30 минут — допустимый.
   const STEP_MS = 30 * 60 * 1000;
 
-  /** Первый старт сетки не раньше чем через секунду: старт строго после now с запасом на вызов route (иначе ответ был бы SLOT_IN_PAST). */
+  /**
+   * Анти-флак маржа от обеих границ (#22): старт выбирается не ближе
+   * 2 секунд ни к now (иначе к моменту проверки на сервере ответ уже
+   * SLOT_IN_PAST), ни к границе now + 30 минут (иначе «слишком близкий»
+   * старт превратится в допустимый, пока запрос дойдёт до сервера).
+   */
+  const SAFETY_MS = 2_000;
+
+  /** Первый старт сетки с маржой SAFETY_MS над now — строго будущее даже к моменту вызова route. */
   function nextGridStart(): { now: number; start: Date } {
     const now = Date.now();
-    return { now, start: new Date(Math.ceil((now + 1000) / STEP_MS) * STEP_MS) };
+    return { now, start: new Date(Math.ceil((now + SAFETY_MS) / STEP_MS) * STEP_MS) };
   }
 
   it('близкий слот (старт внутри получаса после now) → 409 SLOT_TOO_SOON; повтор — тот же ответ, бронь не создаётся', async ({
@@ -339,12 +347,12 @@ describe('POST /api/v1/bookings — минимальный запас до зв�
     expect(put.status).toBe(200);
 
     const { now, start } = nextGridStart();
-    // Граничный момент: старт попал в последнюю секунду перед границей
+    // Граничный момент: старт попал в последние 2 секунды перед границей
     // (now почти ровно на сетке) — близкого слота в природе нет. Пропуск
     // видимый, с причиной: тихий return прошёл бы тест «зелёно» без
     // единой проверки (вакуумный прогон вместо покрытия).
-    if (start.getTime() >= now + STEP_MS - 1000) {
-      skip('старт сетки в последнюю секунду перед границей запаса — близкого слота нет');
+    if (start.getTime() >= now + STEP_MS - SAFETY_MS) {
+      skip('старт сетки ближе 2 секунд к границе запаса — близкого слота нет');
       return;
     }
 
@@ -385,9 +393,10 @@ describe('POST /api/v1/bookings — минимальный запас до зв�
     });
     expect(put.status).toBe(200);
 
-    // первый старт сетки за границей запаса с запасом секунды на вызов
+    // первый старт сетки за границей запаса с маржой SAFETY_MS: к моменту
+    // проверки на сервере старт всё ещё не ближе границы now + 30 минут
     const now = Date.now();
-    const firstAllowed = new Date(Math.ceil((now + STEP_MS + 1000) / STEP_MS) * STEP_MS);
+    const firstAllowed = new Date(Math.ceil((now + STEP_MS + SAFETY_MS) / STEP_MS) * STEP_MS);
 
     const response = await postBooking({
       eventTypeId: type.id,
