@@ -1,0 +1,145 @@
+# Независимое авторевью каждого pull request (шаг 4, #19). Отдельное событие
+# изменения PR — не смешивается с комментариями человека (opencode.yml):
+# авторевью оставляет замечания и не правит код, интерактивный агент
+# выполняет правки только по команде человека /oc.
+#
+# Роль — обычный OpenCode CLI (opencode run): обработчик github run проверяет
+# права отправителя события и для приложения, создавшего PR, может вернуть
+# permission: none. Проверка доверенности выполняется здесь: только ветки
+# этого репозитория (fork-PR до задания и секрета модели не доходят),
+# pull_request_target с запуском кода из PR не используется.
+
+name: autoreview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  autoreview:
+    # Свои ветки (не fork) и не черновик: автор ещё не готов к ревью.
+    if: >
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Устаревшее ревью того же PR отменяется новым push — актуально последнее
+    concurrency:
+      group: autoreview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read # код PR по точному head SHA
+      issues: read # спецификация и согласование в Issues
+      actions: read # результаты CI
+      checks: read
+      statuses: read
+      pull-requests: write # чтение PR/диффа и публикация комментария ревью
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout (точный head SHA автора)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false # ревью не пишет в репозиторий
+
+      # Детерминированный сбор контекста bash-ом: агент только читает файлы
+      # и рассуждает, никаких команд GitHub от модели.
+      - name: Собрать контекст ревью
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .autoreview
+          gh pr view "$PR_NUMBER" --json title,body,headRefName,baseRefName,additions,deletions,changedFiles > .autoreview/pr.json
+          gh pr diff "$PR_NUMBER" > .autoreview/diff.patch
+          gh pr checks "$PR_NUMBER" > .autoreview/checks.txt 2>&1 || true
+          # Обсуждения по ссылкам #N из описания PR: обращение, спецификация,
+          # тикеты и согласование человека приходят с комментариями.
+          for n in $(gh pr view "$PR_NUMBER" --json body --jq .body | grep -oE '#[0-9]+' | tr -d '#' | sort -un); do
+            {
+              echo "# Issue #$n"
+              gh issue view "$n" --json title,body --jq '"## " + .title + "\n\n" + .body'
+              echo
+              echo "## Комментарии"
+              gh api "repos/${GITHUB_REPOSITORY}/issues/${n}/comments" --paginate \
+                --jq '.[] | "---\n**\(.user.login)** (\(.created_at)):\n\n\(.body)"'
+            } > ".autoreview/issue-${n}.md" || echo "issue #$n недоступен" > ".autoreview/issue-${n}.md"
+          done
+          # Прежние авторевью этого PR: повторный запуск не повторяет
+          # разобранные замечания, проверяет новые правки.
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("<!-- autoreview -->")) | "---\n" + .body' \
+            > .autoreview/previous-reviews.md || true
+
+      # Установка отдельным шагом без секрета в окружении: установочные
+      # скрипты пакета не должны видеть ZHIPU_API_KEY; версия зафиксирована
+      # против внезапных изменений поведения CLI (замечание 2 авторевью).
+      - name: Установить OpenCode CLI
+        run: npm install --global @opencode/cli@2.3.0
+
+      - name: Запустить ревьюера (OpenCode CLI)
+        env:
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+        run: |
+          # Запреты только для этого запуска: неинтерактивный opencode run
+          # не может ответить на запрос разрешения (сбой прогона «Cancelled a
+          # request for input ... Web Search»). Проектный opencode.json не
+          # перезаписывается: deny-правила дописываются к нему, MCP-конфиг
+          # и прочие настройки сохраняются (замечание 1 авторевью).
+          deny_rules='[{"action":"websearch","resource":"*","effect":"deny"},{"action":"webfetch","resource":"*","effect":"deny"},{"action":"edit","resource":"*","effect":"deny"}]'
+          if [ -f opencode.json ]; then
+            jq --argjson deny "$deny_rules" '.permissions = ((.permissions // []) + $deny)' \
+              opencode.json > opencode.json.new
+            mv opencode.json.new opencode.json
+          else
+            printf '{"$schema":"https://opencode.ai/config.json","permissions":%s}\n' "$deny_rules" > opencode.json
+          fi
+          cat > .autoreview/prompt.md <<'PROMPT'
+          Ты — независимый ревьюер pull request в проекте «Календарь звонков».
+          Ты НЕ изменяешь код и не выполняешь команды изменения PR: прочитай
+          готовый контекст и подготовь текст ревью. Веб-поиск и сетевые
+          запросы не нужны и запрещены настройками запуска.
+
+          Прочитай файлы:
+          1. REVIEW.md — критерии ревью проекта и формат замечания.
+          2. .autoreview/pr.json — название, описание и размер PR.
+          3. .autoreview/diff.patch — полный дифф.
+          4. .autoreview/issue-*.md — обсуждения по ссылкам из описания PR:
+             обращение, спецификация, тикеты, согласование человека.
+          5. .autoreview/checks.txt — статусы проверок CI.
+          6. .autoreview/previous-reviews.md — прежние авторевью этого PR.
+          Код проверяемой версии — в рабочей копии (head SHA автора).
+
+          Правила:
+          - Сверь изменение со спецификацией и согласованием человека по
+            ссылкам: выход за согласованный объём или недоступные ссылки —
+            замечание о пробеле.
+          - Каждое замечание: файл, строка, условия ошибки, последствие.
+            Форматирование проверяет линтер — его вывод не дублируй.
+          - Не повторяй замечания, уже разобранные в предыдущих ревью.
+          - Если подтверждённых дефектов нет — сообщи об этом прямо.
+          - Ответ — только текст ревью на русском, без кодовых ограждений.
+          PROMPT
+          opencode run --standalone --model zai/glm-5.3-flash "$(cat .autoreview/prompt.md)" > .autoreview/review.md
+          test -s .autoreview/review.md
+
+      - name: Опубликовать ревью
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '<!-- autoreview -->'
+            echo "## Авторевью head SHA \`${HEAD_SHA}\`"
+            echo
+            cat .autoreview/review.md
+          } > .autoreview/comment.md
+          gh pr comment "$PR_NUMBER" --body-file .autoreview/comment.md
+
+      - name: Сообщить о незавершённом ревью
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "Авторевью не завершилось (head SHA \`${HEAD_SHA}\`) — [лог прогона](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Проверь настройку воркфлоу и повтори push или re-run."

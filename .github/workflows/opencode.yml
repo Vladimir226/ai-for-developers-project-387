@@ -1,6 +1,8 @@
 # OpenCode-агент в GitHub Actions: отвечает на команды /opencode и /oc в
 # комментариях к issues и PR (включая комментарии к строкам диффа).
 # Модель, секрет, права и ограничения — в README.md, раздел «Агент в GitHub».
+# Предел запусков на PR — там же, раздел «Предел запусков агента на PR»:
+# бюджет проверяется кодом до вызова модели, отказ публикуется без модели.
 
 name: opencode
 
@@ -32,6 +34,9 @@ jobs:
     permissions:
       id-token: write # OIDC-обмен на токен GitHub App opencode-agent
       contents: read
+      actions: read # счётчик бюджета читает историю запусков (run_attempt)
+      issues: write # отчёты об остановке агента в issues
+      pull-requests: write # отчёты в PR и чтение данных для бюджета
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -39,7 +44,47 @@ jobs:
           fetch-depth: 1
           persist-credentials: false # git-creds не нужны: агент действует токеном App
 
+      # Предел запусков на PR (#19): проверка ДО вызова модели. Для issue
+      # (не PR) шаг пропускается — бюджет действует на pull request. Payload
+      # pull_request_review_comment не содержит issue — номер берётся из
+      # pull_request (замечание 2 авторевью PR #20).
+      - name: Проверить бюджет агента на PR
+        id: budget
+        if: |
+          github.event.issue.pull_request ||
+          github.event_name == 'pull_request_review_comment'
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/agent-budget.mjs "${{ github.event.issue.number || github.event.pull_request.number }}"
+
+      # Отдельный шаг без модели публикует отказ: причина, последний SHA и
+      # ссылка на логи. Токен агента не может переписать счётчик. exit 1 —
+      # прогон красный; шаг отчёта о сбое это состояние не перехватывает
+      # (замечание 4 авторевью PR #20): limit_exhausted ≠ agent_failed.
+      - name: Сообщить об исчерпании бюджета
+        if: steps.budget.outputs.allowed == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          USED: ${{ steps.budget.outputs.used }}
+          LIMIT: ${{ steps.budget.outputs.limit }}
+          HEAD_SHA: ${{ steps.budget.outputs.head_sha }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "<!-- agent-budget -->
+          ## Бюджет агента исчерпан — нужен человек
+
+          Причина: \`limit_exhausted\` — запросов агента на этот PR: ${USED} при лимите ${LIMIT} (команды вызова доверенных авторов и повторные запуски).
+
+          Последний SHA: \`${HEAD_SHA}\`
+          Логи: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          Команда обработана **без вызова модели**. Следующее действие выбирает человек: новая попытка не запустится до нового бюджета (новый PR) или изменения лимита."
+          exit 1
+
       - name: Run OpenCode
+        id: agent
+        if: steps.budget.outputs.allowed != 'false'
         uses: anomalyco/opencode/github@latest
         env:
           # Провайдер zai в OpenCode читает ключ из ZHIPU_API_KEY (см. models.dev)
@@ -47,3 +92,55 @@ jobs:
         with:
           model: zai/glm-5.3-flash
           share: true # публичная ссылка на сессию в ответе агента (репо публичное)
+
+      # Итог остановки агента публикует отдельный шаг без модели (#19):
+      # тайм-аут задания → timeout; отсутствие ключа/сбой подготовки → infra;
+      # прочий неуспех агента → agent_failed. Отказ бюджета (allowed=false)
+      # не считается сбоем агента (замечание 4 авторевью PR #20); номер
+      # субъекта устойчив к обоим событиям комментариев. cancelled() истинно
+      # и для ручной отмены — текст не утверждает причину безусловно
+      # (замечание 3 повторного авторевью).
+      - name: Отчёт — тайм-аут вызова
+        if: cancelled()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const body = `<!-- agent-outcome -->\n## Агент остановлен — нужен человек\n\nПричина: \`timeout\` — задание остановлено по отмене: тайм-аут либо ручная отмена прогона.\n\nЛоги: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const number = context.issue?.number ?? context.payload.pull_request?.number;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: number,
+              body,
+            });
+
+      - name: Отчёт — сбой вызова
+        if: failure() && steps.budget.outputs.allowed != 'false'
+        uses: actions/github-script@v8
+        env:
+          KEY_PRESENT: ${{ secrets.ZHIPU_API_KEY != '' }}
+          # Сбой подготовки классифицируется по итогам самих шагов: крах
+          # шага бюджета или пропуск шага модели (упала более ранняя
+          # подготовка, например checkout) — это infra, а не неуспех агента
+          # (замечания 3 повторного и третьего авторевью)
+          BUDGET_CONCLUSION: ${{ steps.budget.conclusion }}
+          AGENT_CONCLUSION: ${{ steps.agent.conclusion }}
+        with:
+          script: |
+            const agentRan = process.env.AGENT_CONCLUSION === 'failure';
+            const budgetFailed = process.env.BUDGET_CONCLUSION === 'failure';
+            const keyMissing = process.env.KEY_PRESENT !== 'true';
+            const reason = agentRan && !keyMissing ? 'agent_failed' : 'infra';
+            const hint = !agentRan
+              ? budgetFailed
+                ? 'Шаг проверки бюджета упал до вызова модели — счётчик не прочитан (GitHub API), запуск остановлен без расхода попытки.'
+                : 'Подготовка упала до вызова модели (ключ, инструменты или ранние шаги задания) — модель не запускалась.'
+              : keyMissing
+                ? 'Шаг модели упал: ключ ZHIPU_API_KEY недоступен — провайдер не мог аутентифицироваться.'
+                : 'Агент завершился неуспешно — подробности в логах прогона.';
+            const body = `<!-- agent-outcome -->\n## Агент остановлен — нужен человек\n\nПричина: \`${reason}\`. ${hint}\n\nЛоги: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const number = context.issue?.number ?? context.payload.pull_request?.number;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: number,
+              body,
+            });

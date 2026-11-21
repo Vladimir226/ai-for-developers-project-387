@@ -6,9 +6,13 @@
 name: check
 
 on:
+  # PR-версия проверяется событием pull_request; ветки покрываются через
+  # свои PR, поэтому push остаётся только на main (без дублей прогонов).
   push:
     branches:
-      - '**'
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
   check:
