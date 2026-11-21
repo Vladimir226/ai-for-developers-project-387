@@ -14,30 +14,70 @@ import { clearTables, setupTestDatabase } from '@/lib/testing/test-db';
 
 // Шов 1 (integration, ADR-004): вычисляемые слоты GET /event-types/{id}/slots
 // (ADR-0011). Генерация — окно × рабочие часы × шаг = длительности (D2/D3);
-// занятость — наложение с бронями любых типов (D12). Абсолютные даты
-// безопасны: генератор не зависит от «сейчас» (окно задаёт запрос).
+// занятость — наложение с бронями любых типов (D12). С #22 выдача зависит
+// от «сейчас» — старты до границы минимального запаса не возвращаются,
+// поэтому периоды строятся от будущего понедельника (72 часа вперёд):
+// фиксированные календарные даты протухают.
 
 setupTestDatabase();
 
-/** 2026-11-09 — понедельник; неделя 9..15 ноября. */
-const NOV_9 = '2026-11-09T00:00:00+03:00';
-const NOV_11 = '2026-11-11T00:00:00+03:00'; // полночь среды: среда в окне, но её старты после to
-const NOV_15 = '2026-11-15T23:59:59+03:00';
+describe('GET /api/v1/event-types/{id}/slots — минимальный запас до звонка (#22)', () => {
+  beforeEach(async () => {
+    silenceRequestLogs();
+    await clearTables();
+  });
 
-function slotStarts(id: string, query = ''): Promise<string[]> {
-  return getEventTypeSlots(id, query)
-    .then((response) => {
-      expect(response.status).toBe(200);
-      return response.json();
-    })
-    .then((body) => schemas.SlotList.parse(body).slots.map((slot) => slot.startsAt));
-}
+  it('выдача не содержит стартов до границы запаса, включая уже начавшиеся', async () => {
+    const type = await seedEventTypeViaApi({ durationMinutes: 30 });
+    const put = await putWorkingHours({
+      days: weekHours({ startMinutes: 0, endMinutes: 1440 }, []),
+    });
+    expect(put.status).toBe(200);
+
+    // явный from в прошлом: кандидаты включают начавшиеся и близкие слоты —
+    // гость их видеть не должен (правило одно для выдачи и брони, ADR-004)
+    const now = Date.now();
+    const boundary = now + 30 * 60 * 1000;
+    const yesterday = new Date(now - 24 * 60 * 60 * 1000);
+
+    const response = await getEventTypeSlots(type.id, `?from=${yesterday.toISOString()}`);
+    expect(response.status).toBe(200);
+
+    const body = schemas.SlotList.parse(await response.json());
+    expect(body.slots.length).toBeGreaterThan(0);
+    for (const slot of body.slots) {
+      expect(new Date(slot.startsAt).getTime()).toBeGreaterThanOrEqual(boundary);
+    }
+  });
+});
 
 describe('GET /api/v1/event-types/{id}/slots', () => {
   beforeEach(async () => {
     silenceRequestLogs();
     await clearTables();
   });
+
+  /** Полночь стены MSK ближайшего будущего понедельника (≥ 72 часов вперёд). */
+  const monday = futureMondayMidnight();
+
+  /** Мгновение стены MSK: dayOffset суток от понедельника + минуты дня. */
+  const mskAt = (dayOffset: number, minutes: number) =>
+    new Date(monday.getTime() + (dayOffset * 24 * 60 + minutes) * 60 * 1000);
+
+  /** Конец воскресенья той же недели (23:59:59.999 стены MSK). */
+  const sundayEnd = new Date(monday.getTime() + 7 * 24 * 60 * 60 * 1000 - 1);
+
+  const q = (from: Date, to: Date) =>
+    `?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`;
+
+  function slotStarts(id: string, query = ''): Promise<string[]> {
+    return getEventTypeSlots(id, query)
+      .then((response) => {
+        expect(response.status).toBe(200);
+        return response.json();
+      })
+      .then((body) => schemas.SlotList.parse(body).slots.map((slot) => slot.startsAt));
+  }
 
   it('неизвестный тип → 404 NOT_FOUND', async () => {
     const response = await getEventTypeSlots('00000000-0000-4000-8000-000000000000');
@@ -49,48 +89,36 @@ describe('GET /api/v1/event-types/{id}/slots', () => {
   it('дефолт часов D3: слоты в Пн–Пт 09:00–18:00 MSK, выходные пусты, шаг = длительности', async () => {
     const type = await seedEventTypeViaApi({ durationMinutes: 60 });
 
-    const starts = await slotStarts(
-      type.id,
-      `?from=${encodeURIComponent(NOV_9)}&to=${encodeURIComponent(NOV_15)}`,
-    );
+    const starts = await slotStarts(type.id, q(monday, sundayEnd));
 
     // 5 рабочих дней × 9 стартов (09:00 … 17:00)
     expect(starts).toHaveLength(5 * 9);
-    expect(starts[0]).toBe('2026-11-09T06:00:00.000Z');
-    expect(starts.at(-1)).toBe('2026-11-13T14:00:00.000Z');
+    expect(starts[0]).toBe(mskAt(0, 9 * 60).toISOString());
+    expect(starts.at(-1)).toBe(mskAt(4, 17 * 60).toISOString());
 
     const days = new Set(
       starts.map((start) =>
         new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date(start)),
       ),
     );
-    expect([...days].sort()).toEqual([
-      '2026-11-09',
-      '2026-11-10',
-      '2026-11-11',
-      '2026-11-12',
-      '2026-11-13',
-    ]);
+    expect([...days].sort()).toEqual(
+      [0, 1, 2, 3, 4].map((dayOffset) =>
+        new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(mskAt(dayOffset, 0)),
+      ),
+    );
   });
 
   it('шаг = длительности (D2): тип 120 минут — старты 09:00, 11:00, 13:00, 15:00', async () => {
     const type = await seedEventTypeViaApi({ durationMinutes: 120 });
 
-    const starts = await slotStarts(
-      type.id,
-      `?from=${encodeURIComponent(NOV_9)}&to=${encodeURIComponent(NOV_11)}`,
-    );
+    // to — полночь среды: среда в периоде, но её старты после to
+    const starts = await slotStarts(type.id, q(monday, mskAt(2, 0)));
 
-    expect(starts).toEqual([
-      '2026-11-09T06:00:00.000Z',
-      '2026-11-09T08:00:00.000Z',
-      '2026-11-09T10:00:00.000Z',
-      '2026-11-09T12:00:00.000Z',
-      '2026-11-10T06:00:00.000Z',
-      '2026-11-10T08:00:00.000Z',
-      '2026-11-10T10:00:00.000Z',
-      '2026-11-10T12:00:00.000Z',
-    ]);
+    expect(starts).toEqual(
+      [0, 1].flatMap((dayOffset) =>
+        [9, 11, 13, 15].map((hour) => mskAt(dayOffset, hour * 60).toISOString()),
+      ),
+    );
   });
 
   it('заданные часы: границы и выходные из PUT, а не дефолт', async () => {
@@ -100,18 +128,14 @@ describe('GET /api/v1/event-types/{id}/slots', () => {
     });
     expect(put.status).toBe(200);
 
-    const starts = await slotStarts(
-      type.id,
-      `?from=${encodeURIComponent(NOV_9)}&to=${encodeURIComponent(NOV_15)}`,
-    );
+    const starts = await slotStarts(type.id, q(monday, sundayEnd));
 
     // работает только воскресенье: 10:00, 10:30, 11:00, 11:30
-    expect(starts).toEqual([
-      '2026-11-15T07:00:00.000Z',
-      '2026-11-15T07:30:00.000Z',
-      '2026-11-15T08:00:00.000Z',
-      '2026-11-15T08:30:00.000Z',
-    ]);
+    expect(starts).toEqual(
+      [10 * 60, 10 * 60 + 30, 11 * 60, 11 * 60 + 30].map((minutes) =>
+        mskAt(6, minutes).toISOString(),
+      ),
+    );
   });
 
   it('все дни выходные → пустой список', async () => {
@@ -120,12 +144,7 @@ describe('GET /api/v1/event-types/{id}/slots', () => {
       days: weekHours({ startMinutes: 540, endMinutes: 1080 }, [0, 1, 2, 3, 4, 5, 6]),
     });
 
-    expect(
-      await slotStarts(
-        type.id,
-        `?from=${encodeURIComponent(NOV_9)}&to=${encodeURIComponent(NOV_15)}`,
-      ),
-    ).toEqual([]);
+    expect(await slotStarts(type.id, q(monday, sundayEnd))).toEqual([]);
   });
 
   it('from/to: дефолт — 14 дней от сейчас; невалидные значения → 422', async () => {
@@ -144,18 +163,17 @@ describe('GET /api/v1/event-types/{id}/slots', () => {
     expect(bodyNotIso.error.code).toBe('VALIDATION_ERROR');
     expect(bodyNotIso.error.details?.[0]?.field).toBe('from');
 
-    const inverted = await getEventTypeSlots(type.id, `?from=${NOV_15}&to=${NOV_9}`);
+    const inverted = await getEventTypeSlots(type.id, q(sundayEnd, monday));
     expect(inverted.status).toBe(422);
     expect(schemas.ErrorEnvelope.parse(await inverted.json()).error.code).toBe('VALIDATION_ERROR');
   });
 
   it('бронь убирает слот из списка, отмена возвращает (включая брони других типов — D12)', async () => {
-    const monday = futureMondayMidnight();
-    const query = `?from=${monday.toISOString()}&to=${new Date(monday.getTime() + 7 * 24 * 3600 * 1000).toISOString()}`;
+    const query = q(monday, new Date(monday.getTime() + 7 * 24 * 3600 * 1000));
     const type30 = await seedEventTypeViaApi({ durationMinutes: 30 });
     const type60 = await seedEventTypeViaApi({ durationMinutes: 60 });
 
-    const nine = new Date(monday.getTime() + 9 * 3600 * 1000); // 09:00 MSK
+    const nine = mskAt(0, 9 * 60); // 09:00 MSK
     const before = await slotStarts(type30.id, query);
     expect(before).toContain(nine.toISOString());
     const booked = await postBooking({
