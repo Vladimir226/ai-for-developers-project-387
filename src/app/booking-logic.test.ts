@@ -9,6 +9,7 @@ import {
   firstOpenDateKey,
   humanDuration,
   needsSlotReload,
+  pluralRu,
   type ApiFailure,
 } from './booking-logic';
 
@@ -278,10 +279,11 @@ describe('bookingBanner', () => {
 
   it('пиннинг: минуты в тексте SLOT_TOO_SOON — из MIN_LEAD_TIME_MS (единый источник величины)', () => {
     // связывает текст баннера с константой домена: смена запаса меняет и
-    // текст, а не только правило выдачи/брони
+    // текст, а не только правило выдачи/брони; форма — плюрализация
+    // (замечание ревью PR #25)
     const minutes = MIN_LEAD_TIME_MS / 60_000;
     expect(bookingBanner({ kind: 'soon' })?.text).toBe(
-      `До начала звонка меньше ${minutes} минут. Список обновлён — выберите окно позже.`,
+      `До начала звонка меньше ${minutes} ${pluralRu(minutes, 'минута', 'минуты', 'минут')}. Список обновлён — выберите окно позже.`,
     );
   });
 
