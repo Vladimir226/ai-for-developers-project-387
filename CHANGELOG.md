@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/Vladimir226/ai-for-developers-project-387/compare/v1.0.0...v1.1.0) (2026-11-21)
+
+
+### Features
+
+* добавление записи в календарь (ICS) — спецификация [#9](https://github.com/Vladimir226/ai-for-developers-project-387/issues/9) ([#18](https://github.com/Vladimir226/ai-for-developers-project-387/issues/18)) ([970d02b](https://github.com/Vladimir226/ai-for-developers-project-387/commit/970d02b6d07bacfacc95fc64829db2d722cbe923))
+* минимальный запас до звонка (30 минут) — спецификация [#22](https://github.com/Vladimir226/ai-for-developers-project-387/issues/22) ([#25](https://github.com/Vladimir226/ai-for-developers-project-387/issues/25)) ([6e3acd3](https://github.com/Vladimir226/ai-for-developers-project-387/commit/6e3acd3b9c521ed1bdb2a89ee9cdafcec2aa7fb7))
+
+
+### Bug Fixes
+
+* **ci:** облегченный промпт автотриажа, тайм-аут 20 минут и триггер reopened ([#13](https://github.com/Vladimir226/ai-for-developers-project-387/issues/13)) ([#17](https://github.com/Vladimir226/ai-for-developers-project-387/issues/17)) ([a7b3eb3](https://github.com/Vladimir226/ai-for-developers-project-387/commit/a7b3eb325a16ef527e6cfc4451ad27683b1c98af))
+* **ci:** провайдер zai читает ключ из ZHIPU_API_KEY, а не ZAI_API_KEY ([#3](https://github.com/Vladimir226/ai-for-developers-project-387/issues/3)) ([d013307](https://github.com/Vladimir226/ai-for-developers-project-387/commit/d013307a48306f3c4c5fae6c82f4f808130e838b))
+
 ## 1.0.0 (2026-11-21)
 
 
