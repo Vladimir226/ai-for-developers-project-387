@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import {
   dayTitle,
@@ -231,5 +232,67 @@ test.describe('выбор типа → календарь → слот → бр�
     expect((await freeSlots(request, type.id)).map((item) => item.startsAt)).not.toContain(
       slot.startsAt,
     );
+  });
+
+  test('гость на подтверждении скачивает .ics кнопкой «Добавить в календарь»', async ({
+    page,
+    request,
+  }) => {
+    const type = await seedAndTrack(request, {
+      title: 'Воркшоп 45',
+      description: 'Совместный воркшоп по проекту',
+      durationMinutes: 45,
+    });
+
+    const day = firstDayWithSlots(await freeSlots(request, type.id));
+    expect(day, 'в окне 14 дней у нового типа должны быть свободные дни').not.toBeNull();
+    const slot = day!.slots[0];
+
+    // сквозной путь гостя (#12): тип → календарь → слот → форма → подтверждение
+    await page.goto('/');
+    await page
+      .locator('section[aria-label="Виды брони"]')
+      .getByRole('button', { name: /Воркшоп 45/ })
+      .click();
+    await openDay(page, day!.dateKey);
+    await slotButton(page, slot).click();
+    await page.getByLabel('Ваше имя').fill('Анна');
+    await page.getByLabel('Телефон или email').fill('+7 900 555-55-55');
+    await page.getByRole('button', { name: 'Забронировать звонок' }).click();
+
+    const confirmed = page.locator('section[aria-label="Бронь подтверждена"]');
+    await expect(confirmed).toBeVisible();
+
+    // кнопка-ссылка одна и ведёт на эндпоинт только что созданной брони —
+    // прямая ссылка скачивания, исключение из SDK-правила ADR-004 (ADR-0013)
+    const calendarLink = confirmed.getByRole('link', { name: 'Добавить в календарь' });
+    await expect(calendarLink).toBeVisible();
+    await expect(calendarLink).toHaveCount(1);
+    const mine = (await upcomingBookings(request)).find(
+      (booking) => booking.startsAt === slot.startsAt,
+    );
+    expect(mine, 'бронь гостя видна в списке по API').toBeDefined();
+    await expect(calendarLink).toHaveAttribute('href', `/api/v1/bookings/${mine!.id}/calendar`);
+
+    // скачивание: событие ждём до клика; имя файла — из Content-Disposition
+    const downloadPromise = page.waitForEvent('download');
+    await calendarLink.click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe(`booking-${mine!.id}.ics`);
+
+    // в файле — событие этой брони: календарь, VEVENT, стабильный UID,
+    // заголовок с типом и именем гостя, время из ответа API в базовом
+    // формате UTC RFC 5545 (ADR-0009)
+    const ics = await readFile(await download.path(), 'utf8');
+    expect(ics).toContain('BEGIN:VCALENDAR');
+    expect(ics).toContain('BEGIN:VEVENT');
+    expect(ics).toContain(`UID:${mine!.id}@book-a-call.local`);
+    expect(ics).toContain('SUMMARY:Воркшоп 45 — Анна');
+    const pad = (value: number): string => String(value).padStart(2, '0');
+    const start = new Date(slot.startsAt);
+    const dtstart =
+      `${start.getUTCFullYear()}${pad(start.getUTCMonth() + 1)}${pad(start.getUTCDate())}` +
+      `T${pad(start.getUTCHours())}${pad(start.getUTCMinutes())}${pad(start.getUTCSeconds())}Z`;
+    expect(ics).toContain(`DTSTART:${dtstart}`);
   });
 });

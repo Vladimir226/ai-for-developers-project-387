@@ -24,11 +24,15 @@ import {
 // ADR-0009). Мутация — SDK POST /api/v1/bookings + router.refresh() (ADR-004);
 // ошибки — только по error.code (ADR-0005): 409 — баннер макета со свежим
 // списком, 422 — подсказки clay у полей, 404 типа — возврат к видам брони.
+// Подтверждение предлагает «Добавить в календарь» — прямую ссылку скачивания
+// .ics, осознанное исключение из SDK-правила (ADR-004) по ADR-0013.
 
 type EventType = components['schemas']['EventType'];
 
 /** Снимок успешной брони: локальное состояние, не зависит от refresh. */
 interface SuccessInfo {
+  /** id созданной брони — для ссылки скачивания .ics (ADR-0013). */
+  bookingId: string;
   typeTitle: string;
   dayTitle: string;
   timeLabel: string;
@@ -180,6 +184,7 @@ export function BookingFlow({
 
       if (data) {
         setSuccess({
+          bookingId: data.id,
           typeTitle: selectedType.title,
           dayTitle: day.title,
           timeLabel: selectedSlot.timeLabel,
@@ -414,6 +419,14 @@ export function BookingFlow({
         </dl>
 
         <div className="mt-5 flex flex-wrap gap-3">
+          {/* «Добавить в календарь» (#12): браузерное скачивание .ics прямой
+              ссылкой — исключение из «UI ходит через SDK» по ADR-0013 */}
+          <a
+            href={`/api/v1/bookings/${success.bookingId}/calendar`}
+            className="h-11 inline-flex items-center px-5 rounded-xl border border-line hover:border-sage hover:text-sage text-[14px] font-semibold transition"
+          >
+            Добавить в календарь
+          </a>
           <button
             type="button"
             onClick={bookAgain}
